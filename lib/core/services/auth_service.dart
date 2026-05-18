@@ -46,6 +46,8 @@ class AuthService {
       'id': userId,
       'email': email,
       'role': 'kasir',
+      'store_lat': null,
+      'store_lng': null,
     });
 
     final created = await _client

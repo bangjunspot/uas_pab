@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:local_auth/local_auth.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../core/services/auth_service.dart';
 import '../models/profile.dart';
@@ -44,7 +45,7 @@ class AuthProvider extends ChangeNotifier {
     if (msg.contains('network')) {
       return 'Gagal terhubung ke internet';
     }
-    return 'Login gagal. Silakan coba lagi';
+    return 'Login gagal: $message';
   }
 
   Future<void> loadProfile() async {
@@ -141,6 +142,42 @@ class AuthProvider extends ChangeNotifier {
       return null;
     } catch (e) {
       return e.toString();
+    }
+  }
+
+  /// Jalankan verifikasi biometrik untuk login cepat.
+  Future<bool> tryBiometricLogin() async {
+    error = null;
+    notifyListeners();
+
+    try {
+      final auth = LocalAuthentication();
+      final canCheck = await auth.canCheckBiometrics;
+      final supported = await auth.isDeviceSupported();
+      if (!canCheck || !supported) {
+        return false;
+      }
+
+      final authenticated = await auth.authenticate(
+        localizedReason: 'Verifikasi sidik jari untuk masuk ke BANGJUN SPOT',
+        options: const AuthenticationOptions(
+          biometricOnly: false,
+          stickyAuth: true,
+          useErrorDialogs: true,
+        ),
+      );
+
+      if (!authenticated) {
+        error = 'Verifikasi gagal. Coba lagi.';
+        notifyListeners();
+        return false;
+      }
+
+      return Supabase.instance.client.auth.currentSession != null;
+    } catch (e) {
+      error = e.toString();
+      notifyListeners();
+      return false;
     }
   }
 

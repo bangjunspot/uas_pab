@@ -1,10 +1,16 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
+import 'package:geolocator/geolocator.dart';
 import 'package:provider/provider.dart';
 import 'package:fl_chart/fl_chart.dart';
+import 'package:webview_flutter/webview_flutter.dart';
+import '../../core/services/location_service.dart';
 import '../../core/utils/currency_formatter.dart';
 import '../../core/utils/date_formatter.dart';
+import '../../providers/auth_provider.dart';
 import '../../providers/transaction_provider.dart';
 import '../../theme/clay_colors.dart';
+import '../../widgets/clay_button.dart';
 import '../../widgets/clay_card.dart';
 import '../../widgets/clay_fade_slide.dart';
 
@@ -16,17 +22,123 @@ class DashboardPage extends StatefulWidget {
 }
 
 class _DashboardPageState extends State<DashboardPage> {
+  final LocationService _locationService = LocationService();
+  WebViewController? _controller;
+  bool _isDetectingLocation = false;
+  double? _lastAccuracyMeter;
+  DateTime? _lastDetectedAt;
+
+  static const String _mapHtml = '''
+  <!DOCTYPE html>
+  <html>
+  <head>
+    <meta name="viewport"
+          content="width=device-width, initial-scale=1.0">
+    <style>
+      * { margin: 0; padding: 0; box-sizing: border-box; }
+      body { width: 100%; height: 100%; }
+      iframe { width: 100%; height: 100%; border: none; }
+    </style>
+  </head>
+  <body>
+    <iframe
+      src="https://maps.google.com/maps?q=Kedai+Bang+Jun+Samarinda&z=15&output=embed"
+      loading="lazy"
+      allowfullscreen>
+    </iframe>
+  </body>
+  </html>
+  ''';
+
   @override
   void initState() {
     super.initState();
+    if (!kIsWeb &&
+        (defaultTargetPlatform == TargetPlatform.android ||
+            defaultTargetPlatform == TargetPlatform.iOS)) {
+      _controller = WebViewController()
+        ..setJavaScriptMode(JavaScriptMode.unrestricted)
+        ..loadHtmlString(_mapHtml);
+    }
+
     WidgetsBinding.instance.addPostFrameCallback((_) {
       context.read<TransactionProvider>().loadTransactions();
+      context.read<AuthProvider>().loadProfile();
     });
+  }
+
+  /// Tampilkan snackbar dengan style konsisten.
+  void _showSnackBar(String message, {bool success = true}) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        backgroundColor: success ? ClayColors.success : Colors.red.shade600,
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
+  }
+
+  /// Deteksi dan simpan lokasi kedai dari dashboard.
+  Future<void> _detectStoreLocation() async {
+    final auth = context.read<AuthProvider>();
+    final profile = auth.profile;
+    if (profile == null) {
+      _showSnackBar('Profil tidak ditemukan. Coba login ulang.', success: false);
+      return;
+    }
+
+    if (_isDetectingLocation) return;
+    setState(() => _isDetectingLocation = true);
+
+    try {
+      final permission = await Geolocator.checkPermission();
+      if (permission == LocationPermission.deniedForever) {
+        await _locationService.openAppSettingsPage();
+        _showSnackBar(
+          'Izin lokasi ditolak permanen. Aktifkan lagi dari pengaturan aplikasi.',
+          success: false,
+        );
+        return;
+      }
+
+      final position = await _locationService.getCurrentPosition();
+      if (position == null) {
+        _showSnackBar(
+          'Lokasi belum bisa dideteksi. Pastikan GPS aktif dan izin lokasi diberikan.',
+          success: false,
+        );
+        return;
+      }
+
+      await _locationService.saveStoreLocation(
+        userId: profile.id,
+        lat: position.latitude,
+        lng: position.longitude,
+      );
+      await auth.loadProfile();
+
+      if (!mounted) return;
+      setState(() {
+        _lastAccuracyMeter = position.accuracy;
+        _lastDetectedAt = DateTime.now();
+      });
+      _showSnackBar('Lokasi kedai berhasil diperbarui.');
+    } catch (e) {
+      _showSnackBar('Gagal menyimpan lokasi: $e', success: false);
+    } finally {
+      if (mounted) {
+        setState(() => _isDetectingLocation = false);
+      }
+    }
   }
 
   @override
   Widget build(BuildContext context) {
     final tx = context.watch<TransactionProvider>();
+    final auth = context.watch<AuthProvider>();
+    final profile = auth.profile;
+    final hasSavedLocation = profile?.storeLat != null && profile?.storeLng != null;
 
     if (tx.isLoading) {
       return const Center(child: CircularProgressIndicator());
@@ -61,7 +173,7 @@ class _DashboardPageState extends State<DashboardPage> {
       child: ListView(
         padding: const EdgeInsets.all(16),
         children: [
-          // ── Summary Cards ──
+          // -- Summary Cards --
           Row(
             children: [
               Expanded(
@@ -91,7 +203,7 @@ class _DashboardPageState extends State<DashboardPage> {
           ),
           const SizedBox(height: 16),
 
-          // ── 7 Hari Terakhir ──
+          // -- 7 Hari Terakhir --
           ClayFadeSlide(
             index: 2,
             child: ClayCard(
@@ -119,7 +231,7 @@ class _DashboardPageState extends State<DashboardPage> {
           ),
           const SizedBox(height: 16),
 
-          // ── Grafik Keuntungan Tahun Ini (per bulan) ──
+          // -- Grafik Keuntungan Tahun Ini (per bulan) --
           ClayFadeSlide(
             index: 3,
             child: ClayCard(
@@ -150,7 +262,7 @@ class _DashboardPageState extends State<DashboardPage> {
           ),
           const SizedBox(height: 16),
 
-          // ── Grafik Detail Bulan (with month filter) ──
+          // -- Grafik Detail Bulan (with month filter) --
           ClayFadeSlide(
             index: 4,
             child: ClayCard(
@@ -159,8 +271,11 @@ class _DashboardPageState extends State<DashboardPage> {
                 children: [
                   Row(
                     children: [
-                      Icon(Icons.show_chart_rounded,
-                          color: ClayColors.success, size: 18),
+                      Icon(
+                        Icons.show_chart_rounded,
+                        color: ClayColors.success,
+                        size: 18,
+                      ),
                       const SizedBox(width: 6),
                       const Flexible(
                         child: Text(
@@ -170,7 +285,6 @@ class _DashboardPageState extends State<DashboardPage> {
                         ),
                       ),
                       const SizedBox(width: 8),
-                      // Month filter dropdown
                       _MonthDropdown(
                         selectedMonth: tx.selectedMonth,
                         selectedYear: tx.selectedYear,
@@ -202,7 +316,7 @@ class _DashboardPageState extends State<DashboardPage> {
           ),
           const SizedBox(height: 16),
 
-          // ── Recent Transactions ──
+          // -- Recent Transactions --
           ClayFadeSlide(
             index: 5,
             child: ClayCard(
@@ -226,12 +340,7 @@ class _DashboardPageState extends State<DashboardPage> {
                       ),
                     )
                   else
-                    ...transactions
-                        .take(10)
-                        .toList()
-                        .asMap()
-                        .entries
-                        .map((entry) {
+                    ...transactions.take(10).toList().asMap().entries.map((entry) {
                       final t = entry.value;
                       final date = t.createdAt != null
                           ? '${t.createdAt!.day}/${t.createdAt!.month} '
@@ -251,13 +360,18 @@ class _DashboardPageState extends State<DashboardPage> {
                                   color: ClayColors.success.withAlpha(30),
                                   borderRadius: BorderRadius.circular(10),
                                 ),
-                                child: Icon(Icons.check_rounded,
-                                    size: 18, color: ClayColors.success),
+                                child: Icon(
+                                  Icons.check_rounded,
+                                  size: 18,
+                                  color: ClayColors.success,
+                                ),
                               ),
                               const SizedBox(width: 10),
                               Expanded(
-                                child: Text(date,
-                                    style: const TextStyle(fontSize: 13)),
+                                child: Text(
+                                  date,
+                                  style: const TextStyle(fontSize: 13),
+                                ),
                               ),
                               Text(
                                 formatRupiah(t.total),
@@ -275,13 +389,144 @@ class _DashboardPageState extends State<DashboardPage> {
               ),
             ),
           ),
+          const SizedBox(height: 16),
+
+          // -- Lokasi Toko Kami --
+          ClayFadeSlide(
+            index: 6,
+            child: ClayCard(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Row(
+                    children: [
+                      Icon(
+                        Icons.location_on_rounded,
+                        color: ClayColors.primary,
+                        size: 18,
+                      ),
+                      SizedBox(width: 6),
+                      Flexible(
+                        child: Text(
+                          'Lokasi Toko Kami',
+                          style: TextStyle(fontWeight: FontWeight.bold),
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    'Kedai Bang Jun - Samarinda',
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: ClayColors.textMuted,
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  if (hasSavedLocation) ...[
+                    Text(
+                      'Koordinat tersimpan',
+                      style: TextStyle(
+                        fontWeight: FontWeight.w600,
+                        color: ClayColors.textPrimary,
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      'Latitude: ${profile!.storeLat!.toStringAsFixed(6)}\n'
+                      'Longitude: ${profile.storeLng!.toStringAsFixed(6)}',
+                      style: TextStyle(
+                        height: 1.4,
+                        fontSize: 12,
+                        color: ClayColors.textMuted,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                  ] else
+                    Text(
+                      'Lokasi belum dikonfigurasi. Tekan tombol deteksi untuk menyimpan titik terbaru kedai.',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: ClayColors.textMuted,
+                        height: 1.4,
+                      ),
+                    ),
+                  if (_lastDetectedAt != null) ...[
+                    const SizedBox(height: 8),
+                    Text(
+                      'Deteksi terakhir: ${_lastDetectedAt!.day.toString().padLeft(2, '0')}-'
+                      '${_lastDetectedAt!.month.toString().padLeft(2, '0')}-'
+                      '${_lastDetectedAt!.year} '
+                      '${_lastDetectedAt!.hour.toString().padLeft(2, '0')}:'
+                      '${_lastDetectedAt!.minute.toString().padLeft(2, '0')} '
+                      '(akurasi ±${(_lastAccuracyMeter ?? 0).toStringAsFixed(1)} m)',
+                      style: TextStyle(
+                        fontSize: 11,
+                        color: ClayColors.textMuted,
+                      ),
+                    ),
+                  ],
+                  const SizedBox(height: 12),
+                  ClayButton(
+                    label: _isDetectingLocation
+                        ? 'Mendeteksi lokasi...'
+                        : 'Deteksi Lokasi Sekarang',
+                    onPressed: _isDetectingLocation ? null : _detectStoreLocation,
+                    fullWidth: true,
+                  ),
+                  const SizedBox(height: 12),
+                  SizedBox(
+                    height: 220,
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(16),
+                      child: _controller != null
+                          ? WebViewWidget(controller: _controller!)
+                          : Container(
+                              color: ClayColors.surfaceAlt,
+                              padding: const EdgeInsets.all(16),
+                              child: Column(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  Icon(
+                                    Icons.map_outlined,
+                                    color: ClayColors.primary,
+                                    size: 36,
+                                  ),
+                                  const SizedBox(height: 8),
+                                  Text(
+                                    'Pratinjau peta tidak tersedia di platform ini.',
+                                    textAlign: TextAlign.center,
+                                    style: TextStyle(
+                                      color: ClayColors.textMuted,
+                                      fontSize: 12,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 6),
+                                  Text(
+                                    'Gunakan perangkat Android/iOS untuk preview peta di aplikasi.',
+                                    textAlign: TextAlign.center,
+                                    style: TextStyle(
+                                      color: ClayColors.textMuted,
+                                      fontSize: 11,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
         ],
       ),
     );
   }
 }
 
-// ─── Month Dropdown ───────────────────────────────────────────────────────────
+// --- Month Dropdown -----------------------------------------------------------
 class _MonthDropdown extends StatelessWidget {
   final int selectedMonth;
   final int selectedYear;
@@ -327,7 +572,7 @@ class _MonthDropdown extends StatelessWidget {
   }
 }
 
-// ─── Bar Chart 7 Days ─────────────────────────────────────────────────────────
+// --- Bar Chart 7 Days ---------------------------------------------------------
 class _BarChart7Days extends StatelessWidget {
   final List<MapEntry<DateTime, double>> data;
   const _BarChart7Days({required this.data});
@@ -378,10 +623,10 @@ class _BarChart7Days extends StatelessWidget {
               },
             ),
           ),
-          topTitles: const AxisTitles(
-              sideTitles: SideTitles(showTitles: false)),
-          rightTitles: const AxisTitles(
-              sideTitles: SideTitles(showTitles: false)),
+          topTitles:
+              const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+          rightTitles:
+              const AxisTitles(sideTitles: SideTitles(showTitles: false)),
           bottomTitles: AxisTitles(
             sideTitles: SideTitles(
               showTitles: true,
@@ -441,10 +686,10 @@ class _BarChart7Days extends StatelessWidget {
   }
 }
 
-// ─── Yearly Monthly Bar Chart ─────────────────────────────────────────────────
+// --- Yearly Monthly Bar Chart -------------------------------------------------
 class _YearlyBarChart extends StatelessWidget {
-  final List<double> totals; // length = 12
-  final int selectedMonth; // 0-based
+  final List<double> totals;
+  final int selectedMonth;
 
   const _YearlyBarChart({
     required this.totals,
@@ -494,10 +739,10 @@ class _YearlyBarChart extends StatelessWidget {
               },
             ),
           ),
-          topTitles: const AxisTitles(
-              sideTitles: SideTitles(showTitles: false)),
-          rightTitles: const AxisTitles(
-              sideTitles: SideTitles(showTitles: false)),
+          topTitles:
+              const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+          rightTitles:
+              const AxisTitles(sideTitles: SideTitles(showTitles: false)),
           bottomTitles: AxisTitles(
             sideTitles: SideTitles(
               showTitles: true,
@@ -563,7 +808,7 @@ class _YearlyBarChart extends StatelessWidget {
   }
 }
 
-// ─── Line Chart Monthly ───────────────────────────────────────────────────────
+// --- Line Chart Monthly -------------------------------------------------------
 class _LineChartMonth extends StatelessWidget {
   final List<MapEntry<DateTime, double>> data;
   const _LineChartMonth({required this.data});
@@ -634,10 +879,10 @@ class _LineChartMonth extends StatelessWidget {
               },
             ),
           ),
-          topTitles: const AxisTitles(
-              sideTitles: SideTitles(showTitles: false)),
-          rightTitles: const AxisTitles(
-              sideTitles: SideTitles(showTitles: false)),
+          topTitles:
+              const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+          rightTitles:
+              const AxisTitles(sideTitles: SideTitles(showTitles: false)),
           bottomTitles: AxisTitles(
             sideTitles: SideTitles(
               showTitles: true,
@@ -695,7 +940,7 @@ class _LineChartMonth extends StatelessWidget {
   }
 }
 
-// ─── Helpers ──────────────────────────────────────────────────────────────────
+// --- Helpers ------------------------------------------------------------------
 double _niceInterval(double maxY) {
   if (maxY <= 0) return 1;
   final raw = maxY / 4;
@@ -709,8 +954,11 @@ class _SectionHeader extends StatelessWidget {
   final IconData icon;
   final String title;
   final Color color;
-  const _SectionHeader(
-      {required this.icon, required this.title, required this.color});
+  const _SectionHeader({
+    required this.icon,
+    required this.title,
+    required this.color,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -719,9 +967,11 @@ class _SectionHeader extends StatelessWidget {
         Icon(icon, color: color, size: 18),
         const SizedBox(width: 6),
         Flexible(
-          child: Text(title,
-              style: const TextStyle(fontWeight: FontWeight.bold),
-              overflow: TextOverflow.ellipsis),
+          child: Text(
+            title,
+            style: const TextStyle(fontWeight: FontWeight.bold),
+            overflow: TextOverflow.ellipsis,
+          ),
         ),
       ],
     );
@@ -757,8 +1007,10 @@ class _StatCard extends StatelessWidget {
             child: Icon(icon, color: color, size: 18),
           ),
           const SizedBox(height: 8),
-          Text(title,
-              style: const TextStyle(fontSize: 11, color: Colors.grey)),
+          Text(
+            title,
+            style: const TextStyle(fontSize: 11, color: Colors.grey),
+          ),
           const SizedBox(height: 2),
           Text(
             value,
@@ -797,3 +1049,4 @@ class _EmptyChart extends StatelessWidget {
     );
   }
 }
+

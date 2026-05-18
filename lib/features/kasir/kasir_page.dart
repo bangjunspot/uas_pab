@@ -76,6 +76,7 @@ class _KasirPageState extends State<KasirPage>
     return ordered;
   }
 
+  /// Cegah qty melebihi stok tersedia dan tampilkan warning jika perlu.
   bool _tryIncreaseQty({
     required BuildContext context,
     required CartProvider cart,
@@ -348,7 +349,7 @@ class _KasirPageState extends State<KasirPage>
                                   ),
                                 ),
 
-                                // Label stok / status — di bawah nama, bukan di Row nama
+                                // Label stok / status - di bawah nama, bukan di Row nama
                               ],
                             ),
                             const SizedBox(height: 4),
@@ -372,7 +373,7 @@ class _KasirPageState extends State<KasirPage>
                                   borderRadius: BorderRadius.circular(6),
                                 ),
                                 child: Text(
-                                  stockQty <= 0 ? '⚠ Stok Habis' : '⚠ Nonaktif',
+                                  stockQty <= 0 ? '! Stok Habis' : '! Nonaktif',
                                   style: TextStyle(
                                     fontSize: 9,
                                     color: Colors.red.shade600,
@@ -402,7 +403,7 @@ class _KasirPageState extends State<KasirPage>
                           ],
                         ),
                       ),
-                      // Tombol add/qty — disable jika stok habis/nonaktif
+                      // Tombol add/qty - disable jika stok habis/nonaktif
                       if (!canOrder)
                         GestureDetector(
                           onTap: () {
@@ -779,3 +780,4 @@ class _SmallIconBtn extends StatelessWidget {
     );
   }
 }
+

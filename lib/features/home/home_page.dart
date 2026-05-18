@@ -3,9 +3,12 @@ import 'package:provider/provider.dart';
 import '../../models/profile.dart';
 import '../../providers/auth_provider.dart';
 import '../../providers/cart_provider.dart';
+import '../../providers/product_provider.dart';
 import '../../providers/transaction_provider.dart';
+import '../auth/biometric_gate.dart';
 import '../dashboard/dashboard_page.dart';
 import '../kasir/kasir_page.dart';
+import '../kasir/widgets/barcode_scanner_sheet.dart';
 import '../product/product_page.dart';
 import '../stock/stock_page.dart';
 import '../settings/settings_page.dart';
@@ -28,9 +31,9 @@ class HomePage extends StatelessWidget {
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// -----------------------------------------------------------------------------
 // ADMIN HOME
-// ─────────────────────────────────────────────────────────────────────────────
+// -----------------------------------------------------------------------------
 class AdminHomePage extends StatefulWidget {
   const AdminHomePage({super.key});
   @override
@@ -41,7 +44,7 @@ class _AdminHomePageState extends State<AdminHomePage> {
   int _index = 1;
 
   static const _pages = [
-    DashboardPage(),
+    BiometricGate(child: DashboardPage()),
     KasirPage(),
     ProductPage(),
     StockPage(),
@@ -93,9 +96,9 @@ class _AdminHomePageState extends State<AdminHomePage> {
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// -----------------------------------------------------------------------------
 // BOTTOM NAV LAYOUT (Mobile / Narrow)
-// ─────────────────────────────────────────────────────────────────────────────
+// -----------------------------------------------------------------------------
 class _BottomNavLayout extends StatelessWidget {
   final int index;
   final List<Widget> pages;
@@ -128,9 +131,9 @@ class _BottomNavLayout extends StatelessWidget {
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// -----------------------------------------------------------------------------
 // SIDEBAR LAYOUT (Tablet / Desktop)
-// ─────────────────────────────────────────────────────────────────────────────
+// -----------------------------------------------------------------------------
 class _SidebarLayout extends StatelessWidget {
   final int index;
   final List<Widget> pages;
@@ -364,14 +367,15 @@ class _Sidebar extends StatelessWidget {
   }
 
   Widget _logoIcon() => Container(
-    width: 36,
-    height: 36,
-    decoration: BoxDecoration(
-      color: ClayColors.primary,
-      borderRadius: BorderRadius.circular(10),
-    ),
-    child: const Icon(Icons.storefront_rounded, color: Colors.white, size: 18),
-  );
+        width: 36,
+        height: 36,
+        decoration: BoxDecoration(
+          color: ClayColors.primary,
+          borderRadius: BorderRadius.circular(10),
+        ),
+        child: const Icon(Icons.storefront_rounded,
+            color: Colors.white, size: 18),
+      );
 }
 
 class _TopBar extends StatelessWidget {
@@ -425,9 +429,9 @@ class _TopBar extends StatelessWidget {
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// -----------------------------------------------------------------------------
 // KASIR HOME (role kasir)
-// ─────────────────────────────────────────────────────────────────────────────
+// -----------------------------------------------------------------------------
 class KasirHomePage extends StatelessWidget {
   const KasirHomePage({super.key});
 
@@ -448,32 +452,42 @@ class KasirHomePage extends StatelessWidget {
         context,
         'Kasir BANGJUN SPOT',
         onLogout: () => _confirmLogout(context),
-        extra: Selector<CartProvider, int>(
-          selector: (_, cart) => cart.totalItems,
-          builder: (context, total, _) => total > 0
-              ? Container(
-                  margin: const EdgeInsets.only(right: 8),
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 10,
-                    vertical: 4,
-                  ),
-                  decoration: BoxDecoration(
-                    color: ClayColors.primary.withAlpha(25),
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                  child: Text(
-                    '$total item',
-                    style: TextStyle(
-                      fontSize: 12,
-                      color: ClayColors.primary,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                )
-              : const SizedBox.shrink(),
+        extra: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            IconButton(
+              tooltip: 'Scan Barcode/QR',
+              onPressed: () => _openBarcodeScanner(context),
+              icon: const Icon(Icons.qr_code_scanner_rounded),
+              color: ClayColors.primary,
+            ),
+            Selector<CartProvider, int>(
+              selector: (_, cart) => cart.totalItems,
+              builder: (context, total, _) => total > 0
+                  ? Container(
+                      margin: const EdgeInsets.only(right: 8),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 10,
+                        vertical: 4,
+                      ),
+                      decoration: BoxDecoration(
+                        color: ClayColors.primary.withAlpha(25),
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      child: Text(
+                        '$total item',
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: ClayColors.primary,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    )
+                  : const SizedBox.shrink(),
+            ),
+          ],
         ),
       ),
-      // Responsive: constrain width on desktop/web
       body: LayoutBuilder(
         builder: (context, constraints) {
           if (constraints.maxWidth >= 800) {
@@ -491,9 +505,9 @@ class KasirHomePage extends StatelessWidget {
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// -----------------------------------------------------------------------------
 // Shared Widgets
-// ─────────────────────────────────────────────────────────────────────────────
+// -----------------------------------------------------------------------------
 class _LogoutDialog extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
@@ -548,7 +562,7 @@ AppBar _buildAppBar(
   return AppBar(
     title: Text(title),
     actions: [
-      if (extra != null) extra,
+      ?extra,
       IconButton(
         onPressed: onLogout,
         icon: const Icon(Icons.logout_rounded),
@@ -668,3 +682,44 @@ class _NavItem {
   final String label;
   const _NavItem({required this.icon, required this.label});
 }
+
+Future<void> _openBarcodeScanner(BuildContext context) async {
+  final productProvider = context.read<ProductProvider>();
+  final cartProvider = context.read<CartProvider>();
+  final products = productProvider.products;
+
+  if (products.isEmpty) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: const Text('Produk belum tersedia untuk dipindai'),
+        backgroundColor: Colors.red,
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      ),
+    );
+    return;
+  }
+
+  await Navigator.of(context).push(
+    MaterialPageRoute(
+      fullscreenDialog: true,
+      builder: (_) => BarcodeScannerSheet(
+        products: products,
+        onProductFound: (product) {
+          cartProvider.addItem(product);
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('${product.name} ditambahkan via scan'),
+              backgroundColor: ClayColors.success,
+              behavior: SnackBarBehavior.floating,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
+              ),
+            ),
+          );
+        },
+      ),
+    ),
+  );
+}
+

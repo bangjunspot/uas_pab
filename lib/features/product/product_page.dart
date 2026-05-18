@@ -1,5 +1,9 @@
+import 'dart:typed_data';
 import 'package:flutter/material.dart';
+import 'package:image_cropper/image_cropper.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:provider/provider.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../core/utils/emoji_filter.dart';
 import '../../core/utils/input_validators.dart';
 import '../../core/utils/currency_formatter.dart';
@@ -28,6 +32,9 @@ class _ProductPageState extends State<ProductPage> {
     'Minuman',
     'Lainnya',
   ];
+
+  final ImagePicker _imagePicker = ImagePicker();
+
   List<String> _orderedCategories(Iterable<String> keys) {
     final ordered = <String>[];
     for (final key in _categoryOptions) {
@@ -61,6 +68,7 @@ class _ProductPageState extends State<ProductPage> {
     });
   }
 
+  /// Tampilkan snackbar dengan gaya konsisten.
   void _showSnackBar(String message, {bool success = true}) {
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
@@ -84,6 +92,142 @@ class _ProductPageState extends State<ProductPage> {
     );
   }
 
+  /// Ambil foto produk dari kamera.
+  Future<Uint8List?> _captureProductPhoto() async {
+    try {
+      final picked = await _imagePicker.pickImage(
+        source: ImageSource.camera,
+        imageQuality: 85,
+      );
+      if (picked == null) return null;
+      if (!mounted) return null;
+
+      // Beri kesempatan crop sebelum foto dipakai sebagai preview/upload.
+      final cropped = await ImageCropper().cropImage(
+        sourcePath: picked.path,
+        compressFormat: ImageCompressFormat.jpg,
+        compressQuality: 85,
+        uiSettings: [
+          AndroidUiSettings(
+            toolbarTitle: 'Crop Foto Produk',
+            toolbarColor: ClayColors.primary,
+            toolbarWidgetColor: Colors.white,
+            initAspectRatio: CropAspectRatioPreset.square,
+            lockAspectRatio: false,
+            hideBottomControls: false,
+          ),
+          IOSUiSettings(
+            title: 'Crop Foto Produk',
+          ),
+          WebUiSettings(
+            context: context,
+            presentStyle: WebPresentStyle.dialog,
+            size: const CropperSize(width: 450, height: 520),
+          ),
+        ],
+      );
+
+      if (cropped == null) return null;
+      return cropped.readAsBytes();
+    } catch (e) {
+      _showSnackBar('Gagal mengambil foto: $e', success: false);
+      return null;
+    }
+  }
+
+  /// Upload foto produk ke Supabase Storage dan ambil public URL.
+  Future<String> _uploadProductPhoto({
+    required Uint8List bytes,
+    required String fileName,
+  }) async {
+    final bucket = Supabase.instance.client.storage.from('product-images');
+    await bucket.uploadBinary(
+      fileName,
+      bytes,
+      fileOptions: const FileOptions(
+        contentType: 'image/jpeg',
+        upsert: true,
+      ),
+    );
+    return bucket.getPublicUrl(fileName);
+  }
+
+  /// Tampilkan pesan error upload yang lebih jelas untuk storage.
+  String _mapPhotoUploadError(Object error) {
+    final msg = error.toString().toLowerCase();
+    if (msg.contains('bucket not found')) {
+      return 'Bucket "product-images" belum ada. Buat bucket dulu di Supabase Storage.';
+    }
+    if (msg.contains('permission') || msg.contains('unauthorized')) {
+      return 'Tidak punya izin upload ke bucket product-images.';
+    }
+    return 'Gagal simpan foto: $error';
+  }
+
+  /// Bangun preview foto di dalam dialog tambah/edit produk.
+  Widget _buildPhotoPreview({
+    required Uint8List? photoBytes,
+    required String? imageUrl,
+  }) {
+    Widget child;
+
+    if (photoBytes != null) {
+      child = Image.memory(
+        photoBytes,
+        fit: BoxFit.cover,
+        width: double.infinity,
+        height: 180,
+      );
+    } else if (imageUrl != null && imageUrl.isNotEmpty) {
+      child = Image.network(
+        imageUrl,
+        fit: BoxFit.cover,
+        width: double.infinity,
+        height: 180,
+        errorBuilder: (_, _, _) => _buildPhotoPlaceholder(),
+      );
+    } else {
+      child = _buildPhotoPlaceholder();
+    }
+
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(12),
+      child: SizedBox(
+        width: double.infinity,
+        height: 180,
+        child: child,
+      ),
+    );
+  }
+
+  /// Placeholder jika foto belum tersedia.
+  Widget _buildPhotoPlaceholder() {
+    return Container(
+      color: ClayColors.surfaceAlt,
+      child: Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(
+              Icons.add_a_photo_rounded,
+              size: 42,
+              color: ClayColors.textMuted,
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'Belum ada foto',
+              style: TextStyle(
+                color: ClayColors.textMuted,
+                fontSize: 13,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// Dialog tambah/edit produk beserta foto kamera.
   Future<void> _openProductForm({Product? product}) async {
     final nameController = TextEditingController(text: product?.name ?? '');
     final priceController = TextEditingController(
@@ -101,6 +245,8 @@ class _ProductPageState extends State<ProductPage> {
 
     bool isActive = product?.isActive ?? true;
     String? currentImageUrl = product?.imageUrl;
+    Uint8List? selectedPhotoBytes;
+    bool isUploadingPhoto = false;
 
     final formKey = GlobalKey<FormState>();
 
@@ -109,9 +255,16 @@ class _ProductPageState extends State<ProductPage> {
       builder: (dialogCtx) {
         return StatefulBuilder(
           builder: (dialogCtx, setStateDialog) {
+            Future<void> pickPhoto() async {
+              final photo = await _captureProductPhoto();
+              if (photo == null) return;
+              setStateDialog(() {
+                selectedPhotoBytes = photo;
+              });
+            }
+
             return AlertDialog(
               title: Text(product == null ? 'Tambah Produk' : 'Edit Produk'),
-              // ── SizedBox(width: double.maxFinite) agar tidak melebar ──
               content: SizedBox(
                 width: double.maxFinite,
                 child: Form(
@@ -120,6 +273,19 @@ class _ProductPageState extends State<ProductPage> {
                     child: Column(
                       mainAxisSize: MainAxisSize.min,
                       children: [
+                        _buildPhotoPreview(
+                          photoBytes: selectedPhotoBytes,
+                          imageUrl: selectedPhotoBytes == null
+                              ? currentImageUrl
+                              : null,
+                        ),
+                        const SizedBox(height: 10),
+                        ClayButton(
+                          label: 'Ambil Foto',
+                          onPressed: isUploadingPhoto ? null : pickPhoto,
+                          fullWidth: true,
+                        ),
+                        const SizedBox(height: 14),
                         ClayInput(
                           controller: nameController,
                           label: 'Nama Produk',
@@ -188,16 +354,62 @@ class _ProductPageState extends State<ProductPage> {
               ),
               actions: [
                 TextButton(
-                  onPressed: () => Navigator.pop(dialogCtx, false),
+                  onPressed: isUploadingPhoto
+                      ? null
+                      : () => Navigator.pop(dialogCtx, false),
                   child: const Text('Batal'),
                 ),
                 ClayButton(
-                  onPressed: () {
-                    if (formKey.currentState!.validate()) {
-                      Navigator.pop(dialogCtx, true);
-                    }
-                  },
-                  label: 'Simpan',
+                  onPressed: isUploadingPhoto
+                      ? null
+                      : () async {
+                          if (!formKey.currentState!.validate()) return;
+
+                          setStateDialog(() => isUploadingPhoto = true);
+                          try {
+                            if (selectedPhotoBytes != null) {
+                              final fileId = product?.id.isNotEmpty == true
+                                  ? product!.id
+                                  : DateTime.now().millisecondsSinceEpoch
+                                      .toString();
+                              final fileName = 'products/$fileId.jpg';
+                              try {
+                                currentImageUrl = await _uploadProductPhoto(
+                                  bytes: selectedPhotoBytes!,
+                                  fileName: fileName,
+                                );
+                              } catch (e) {
+                                if (!dialogCtx.mounted) return;
+                                ScaffoldMessenger.of(dialogCtx).showSnackBar(
+                                  SnackBar(
+                                    content: Text(_mapPhotoUploadError(e)),
+                                    backgroundColor: Colors.red,
+                                    behavior: SnackBarBehavior.floating,
+                                  ),
+                                );
+                                // Tetap lanjut simpan produk meski upload foto gagal.
+                                currentImageUrl = product?.imageUrl;
+                              }
+                            }
+
+                            if (!dialogCtx.mounted) return;
+                            Navigator.pop(dialogCtx, true);
+                          } catch (e) {
+                            if (!dialogCtx.mounted) return;
+                            ScaffoldMessenger.of(dialogCtx).showSnackBar(
+                              SnackBar(
+                                content: Text('Gagal simpan foto: $e'),
+                                backgroundColor: Colors.red,
+                                behavior: SnackBarBehavior.floating,
+                              ),
+                            );
+                          } finally {
+                            if (dialogCtx.mounted) {
+                              setStateDialog(() => isUploadingPhoto = false);
+                            }
+                          }
+                        },
+                  label: isUploadingPhoto ? 'Menyimpan...' : 'Simpan',
                 ),
               ],
             );
@@ -209,7 +421,6 @@ class _ProductPageState extends State<ProductPage> {
     if (result != true) return;
     if (!mounted) return;
 
-    // Capture provider sebelum async gap
     final provider = context.read<ProductProvider>();
 
     final rawPrice = priceController.text.replaceAll(RegExp(r'[^\d]'), '');
@@ -247,7 +458,7 @@ class _ProductPageState extends State<ProductPage> {
     }
   }
 
-  /// Toggle aktif/nonaktif — hanya bisa aktif jika ada stok
+  /// Toggle aktif/nonaktif - hanya bisa aktif jika ada stok.
   Future<void> _toggleActive(
     Product product,
     bool newValue,
@@ -257,7 +468,7 @@ class _ProductPageState extends State<ProductPage> {
 
     if (newValue && stock <= 0) {
       _showSnackBar(
-        'Tidak bisa diaktifkan — stok "${product.name}" masih habis. '
+        'Tidak bisa diaktifkan - stok "${product.name}" masih habis. '
         'Tambah stok di halaman Stok terlebih dahulu.',
         success: false,
       );
@@ -287,6 +498,7 @@ class _ProductPageState extends State<ProductPage> {
     }
   }
 
+  /// Hapus produk setelah konfirmasi.
   Future<void> _deleteProduct(Product product) async {
     final confirmed = await showDialog<bool>(
       context: context,
@@ -412,7 +624,36 @@ class _ProductPageState extends State<ProductPage> {
                             ),
                             child: Row(
                               children: [
-                                // Thumbnail dihilangkan agar tampilan lebih ringkas
+                                Container(
+                                  width: 56,
+                                  height: 56,
+                                  decoration: BoxDecoration(
+                                    color: ClayColors.surfaceAlt,
+                                    borderRadius: BorderRadius.circular(12),
+                                    border: Border.all(
+                                      color: Colors.black.withAlpha(10),
+                                    ),
+                                  ),
+                                  child: ClipRRect(
+                                    borderRadius: BorderRadius.circular(12),
+                                    child: product.imageUrl != null &&
+                                            product.imageUrl!.isNotEmpty
+                                        ? Image.network(
+                                            product.imageUrl!,
+                                            fit: BoxFit.cover,
+                                            errorBuilder: (_, _, _) =>
+                                                const Icon(
+                                              Icons.restaurant_menu_rounded,
+                                              color: Colors.grey,
+                                            ),
+                                          )
+                                        : const Icon(
+                                            Icons.restaurant_menu_rounded,
+                                            color: Colors.grey,
+                                          ),
+                                  ),
+                                ),
+                                const SizedBox(width: 12),
                                 Expanded(
                                   child: Column(
                                     crossAxisAlignment:
@@ -456,7 +697,6 @@ class _ProductPageState extends State<ProductPage> {
                                     ],
                                   ),
                                 ),
-                                // Toggle: disabled jika stok habis (auto-manage)
                                 Column(
                                   mainAxisSize: MainAxisSize.min,
                                   children: [
@@ -470,7 +710,6 @@ class _ProductPageState extends State<ProductPage> {
                                         scale: 0.8,
                                         child: Switch(
                                           value: product.isActive,
-                                          // Jika stok habis dan sedang nonaktif, toggle dikunci
                                           onChanged:
                                               (stockEmpty && !product.isActive)
                                               ? null
@@ -544,3 +783,4 @@ class _StatusBadge extends StatelessWidget {
     );
   }
 }
+

@@ -26,6 +26,7 @@ class _SettingsPageState extends State<SettingsPage> {
     });
   }
 
+  /// Tampilkan snackbar dengan style konsisten.
   void _showSnackBar(String message, {bool success = true}) {
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
@@ -49,6 +50,7 @@ class _SettingsPageState extends State<SettingsPage> {
     );
   }
 
+  /// Dialog tambah user admin/kasir.
   Future<void> _openAddUserDialog() async {
     final emailCtrl = TextEditingController();
     final passCtrl = TextEditingController();
@@ -96,7 +98,6 @@ class _SettingsPageState extends State<SettingsPage> {
                     validator: InputValidators.email,
                   ),
                   const SizedBox(height: 12),
-                  // Password field with reveal toggle
                   ClayInput(
                     controller: passCtrl,
                     label: 'Password',
@@ -176,6 +177,7 @@ class _SettingsPageState extends State<SettingsPage> {
     }
   }
 
+  /// Dialog edit role user.
   Future<void> _openEditDialog(Profile user) async {
     String selectedRole = user.role;
     final passCtrl = TextEditingController();
@@ -229,7 +231,6 @@ class _SettingsPageState extends State<SettingsPage> {
                   },
                 ),
                 const SizedBox(height: 12),
-                // Optional password reset with reveal toggle
                 ClayInput(
                   controller: passCtrl,
                   label: 'Password Baru (opsional)',
@@ -272,6 +273,7 @@ class _SettingsPageState extends State<SettingsPage> {
     }
   }
 
+  /// Konfirmasi hapus user.
   Future<void> _confirmDeleteUser(Profile user) async {
     final currentUser = context.read<AuthProvider>().profile;
     if (currentUser?.id == user.id) {
@@ -416,140 +418,142 @@ class _SettingsPageState extends State<SettingsPage> {
                 ],
               ),
             )
-          : ListView.builder(
+          : ListView(
               padding: const EdgeInsets.fromLTRB(16, 16, 16, 80),
-              itemCount: auth.users.length,
-              itemBuilder: (context, index) {
-                final user = auth.users[index];
-                final isSelf = user.id == currentUserId;
-                final isAdmin = user.role == 'admin';
+              children: [
+                ...auth.users.asMap().entries.map((entry) {
+                  final user = entry.value;
+                  final isSelf = user.id == currentUserId;
+                  final isAdmin = user.role == 'admin';
 
-                return ClayFadeSlide(
-                  index: index,
-                  child: Padding(
-                    padding: const EdgeInsets.only(bottom: 10),
-                    child: ClayCard(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 16,
-                        vertical: 12,
-                      ),
-                      child: Row(
-                        children: [
-                          Container(
-                            width: 42,
-                            height: 42,
-                            decoration: BoxDecoration(
-                              color: isAdmin
-                                  ? ClayColors.primary.withAlpha(30)
-                                  : ClayColors.secondary.withAlpha(30),
-                              borderRadius: BorderRadius.circular(12),
+                  return ClayFadeSlide(
+                    index: entry.key,
+                    child: Padding(
+                      padding: const EdgeInsets.only(bottom: 10),
+                      child: ClayCard(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 16,
+                          vertical: 12,
+                        ),
+                        child: Row(
+                          children: [
+                            Container(
+                              width: 42,
+                              height: 42,
+                              decoration: BoxDecoration(
+                                color: isAdmin
+                                    ? ClayColors.primary.withAlpha(30)
+                                    : ClayColors.secondary.withAlpha(30),
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                              child: Icon(
+                                isAdmin
+                                    ? Icons.admin_panel_settings_rounded
+                                    : Icons.person_rounded,
+                                color: isAdmin
+                                    ? ClayColors.primary
+                                    : ClayColors.secondary,
+                                size: 22,
+                              ),
                             ),
-                            child: Icon(
-                              isAdmin
-                                  ? Icons.admin_panel_settings_rounded
-                                  : Icons.person_rounded,
-                              color: isAdmin
-                                  ? ClayColors.primary
-                                  : ClayColors.secondary,
-                              size: 22,
-                            ),
-                          ),
-                          const SizedBox(width: 12),
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Row(
-                                  children: [
-                                    Expanded(
-                                      child: Text(
-                                        user.email,
-                                        style: const TextStyle(
-                                          fontWeight: FontWeight.w600,
-                                          fontSize: 14,
-                                        ),
-                                        overflow: TextOverflow.ellipsis,
-                                      ),
-                                    ),
-                                    if (isSelf)
-                                      Container(
-                                        margin: const EdgeInsets.only(left: 6),
-                                        padding: const EdgeInsets.symmetric(
-                                          horizontal: 6,
-                                          vertical: 2,
-                                        ),
-                                        decoration: BoxDecoration(
-                                          color: ClayColors.success.withAlpha(
-                                            30,
-                                          ),
-                                          borderRadius: BorderRadius.circular(
-                                            6,
-                                          ),
-                                        ),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Row(
+                                    children: [
+                                      Expanded(
                                         child: Text(
-                                          'Saya',
-                                          style: TextStyle(
-                                            fontSize: 10,
-                                            color: ClayColors.success,
+                                          user.email,
+                                          style: const TextStyle(
                                             fontWeight: FontWeight.w600,
+                                            fontSize: 14,
                                           ),
+                                          overflow: TextOverflow.ellipsis,
                                         ),
                                       ),
-                                  ],
-                                ),
-                                const SizedBox(height: 4),
-                                Container(
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 8,
-                                    vertical: 2,
+                                      if (isSelf)
+                                        Container(
+                                          margin: const EdgeInsets.only(left: 6),
+                                          padding: const EdgeInsets.symmetric(
+                                            horizontal: 6,
+                                            vertical: 2,
+                                          ),
+                                          decoration: BoxDecoration(
+                                            color: ClayColors.success.withAlpha(
+                                              30,
+                                            ),
+                                            borderRadius: BorderRadius.circular(
+                                              6,
+                                            ),
+                                          ),
+                                          child: Text(
+                                            'Saya',
+                                            style: TextStyle(
+                                              fontSize: 10,
+                                              color: ClayColors.success,
+                                              fontWeight: FontWeight.w600,
+                                            ),
+                                          ),
+                                        ),
+                                    ],
                                   ),
-                                  decoration: BoxDecoration(
-                                    color: isAdmin
-                                        ? ClayColors.primary.withAlpha(18)
-                                        : ClayColors.secondary.withAlpha(18),
-                                    borderRadius: BorderRadius.circular(6),
-                                  ),
-                                  child: Text(
-                                    user.role.toUpperCase(),
-                                    style: TextStyle(
-                                      fontSize: 11,
-                                      fontWeight: FontWeight.w700,
+                                  const SizedBox(height: 4),
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 8,
+                                      vertical: 2,
+                                    ),
+                                    decoration: BoxDecoration(
                                       color: isAdmin
-                                          ? ClayColors.primary
-                                          : ClayColors.secondary,
+                                          ? ClayColors.primary.withAlpha(18)
+                                          : ClayColors.secondary.withAlpha(18),
+                                      borderRadius: BorderRadius.circular(6),
+                                    ),
+                                    child: Text(
+                                      user.role.toUpperCase(),
+                                      style: TextStyle(
+                                        fontSize: 11,
+                                        fontWeight: FontWeight.w700,
+                                        color: isAdmin
+                                            ? ClayColors.primary
+                                            : ClayColors.secondary,
+                                      ),
                                     ),
                                   ),
+                                ],
+                              ),
+                            ),
+                            if (!isSelf) ...[
+                              IconButton(
+                                icon: Icon(
+                                  Icons.edit_rounded,
+                                  size: 20,
+                                  color: ClayColors.warning,
                                 ),
-                              ],
-                            ),
-                          ),
-                          if (!isSelf) ...[
-                            IconButton(
-                              icon: Icon(
-                                Icons.edit_rounded,
-                                size: 20,
-                                color: ClayColors.warning,
+                                tooltip: 'Edit user',
+                                onPressed: () => _openEditDialog(user),
                               ),
-                              tooltip: 'Edit user',
-                              onPressed: () => _openEditDialog(user),
-                            ),
-                            IconButton(
-                              icon: Icon(
-                                Icons.delete_rounded,
-                                size: 20,
-                                color: Colors.red.shade300,
+                              IconButton(
+                                icon: Icon(
+                                  Icons.delete_rounded,
+                                  size: 20,
+                                  color: Colors.red.shade300,
+                                ),
+                                tooltip: 'Hapus user',
+                                onPressed: () => _confirmDeleteUser(user),
                               ),
-                              tooltip: 'Hapus user',
-                              onPressed: () => _confirmDeleteUser(user),
-                            ),
+                            ],
                           ],
-                        ],
+                        ),
                       ),
                     ),
-                  ),
-                );
-              },
+                  );
+                }),
+              ],
             ),
     );
   }
 }
+
