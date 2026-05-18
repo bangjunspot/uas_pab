@@ -4,7 +4,6 @@
 [![Dart](https://img.shields.io/badge/Dart-3.x-0175C2?style=for-the-badge&logo=dart&logoColor=white)](https://dart.dev/)
 [![Supabase](https://img.shields.io/badge/Supabase-Backend-3ECF8E?style=for-the-badge&logo=supabase&logoColor=white)](https://supabase.com/)
 [![Platform](https://img.shields.io/badge/Platform-Android%20%7C%20Web-F97316?style=for-the-badge)](#)
-[![Status](https://img.shields.io/badge/Status-UAS%20Ready-EA580C?style=for-the-badge)](#)
 
 ---
 
@@ -632,6 +631,5 @@ flutter pub get
 
 [![Flutter](https://img.shields.io/badge/Built_with-Flutter-02569B?style=flat-square&logo=flutter)](https://flutter.dev/)
 [![Supabase](https://img.shields.io/badge/Powered_by-Supabase-3ECF8E?style=flat-square&logo=supabase)](https://supabase.com/)
-[![UAS](https://img.shields.io/badge/Project-UAS%20PAB-F97316?style=flat-square)](#)
 
 </div>
