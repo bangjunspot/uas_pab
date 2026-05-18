@@ -1,4 +1,5 @@
-import 'dart:typed_data';
+import 'package:file_picker/file_picker.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:image_cropper/image_cropper.dart';
 import 'package:image_picker/image_picker.dart';
@@ -92,19 +93,10 @@ class _ProductPageState extends State<ProductPage> {
     );
   }
 
-  /// Ambil foto produk dari kamera.
-  Future<Uint8List?> _captureProductPhoto() async {
+  Future<Uint8List?> _cropAndReadBytes(String sourcePath) async {
     try {
-      final picked = await _imagePicker.pickImage(
-        source: ImageSource.camera,
-        imageQuality: 85,
-      );
-      if (picked == null) return null;
-      if (!mounted) return null;
-
-      // Beri kesempatan crop sebelum foto dipakai sebagai preview/upload.
       final cropped = await ImageCropper().cropImage(
-        sourcePath: picked.path,
+        sourcePath: sourcePath,
         compressFormat: ImageCompressFormat.jpg,
         compressQuality: 85,
         uiSettings: [
@@ -128,10 +120,94 @@ class _ProductPageState extends State<ProductPage> {
       );
 
       if (cropped == null) return null;
-      return cropped.readAsBytes();
+      return await cropped.readAsBytes();
     } catch (e) {
-      _showSnackBar('Gagal mengambil foto: $e', success: false);
+      _showSnackBar('Gagal crop foto: $e', success: false);
       return null;
+    }
+  }
+
+  Future<Uint8List?> _pickFromImageSource(ImageSource source) async {
+    try {
+      final picked = await _imagePicker.pickImage(
+        source: source,
+        imageQuality: 85,
+      );
+      if (picked == null) return null;
+      if (!mounted) return null;
+      return _cropAndReadBytes(picked.path);
+    } catch (e) {
+      _showSnackBar('Gagal memilih gambar: $e', success: false);
+      return null;
+    }
+  }
+
+  Future<Uint8List?> _pickFromStorage() async {
+    try {
+      final result = await FilePicker.platform.pickFiles(
+        type: FileType.image,
+        withData: true,
+      );
+      if (result == null || result.files.isEmpty) return null;
+
+      final file = result.files.first;
+      if (file.bytes != null) {
+        if (kIsWeb || file.path == null || file.path!.isEmpty) {
+          return file.bytes;
+        }
+      }
+
+      if (file.path == null || file.path!.isEmpty) {
+        _showSnackBar('File tidak valid', success: false);
+        return null;
+      }
+
+      return _cropAndReadBytes(file.path!);
+    } catch (e) {
+      _showSnackBar('Gagal memilih file: $e', success: false);
+      return null;
+    }
+  }
+
+  Future<Uint8List?> _pickProductPhoto() async {
+    final option = await showModalBottomSheet<String>(
+      context: context,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.camera_alt_rounded),
+              title: const Text('Kamera'),
+              onTap: () => Navigator.pop(ctx, 'camera'),
+            ),
+            ListTile(
+              leading: const Icon(Icons.photo_library_rounded),
+              title: const Text('Galeri'),
+              onTap: () => Navigator.pop(ctx, 'gallery'),
+            ),
+            ListTile(
+              leading: const Icon(Icons.folder_rounded),
+              title: const Text('Penyimpanan'),
+              onTap: () => Navigator.pop(ctx, 'storage'),
+            ),
+          ],
+        ),
+      ),
+    );
+
+    switch (option) {
+      case 'camera':
+        return _pickFromImageSource(ImageSource.camera);
+      case 'gallery':
+        return _pickFromImageSource(ImageSource.gallery);
+      case 'storage':
+        return _pickFromStorage();
+      default:
+        return null;
     }
   }
 
@@ -227,7 +303,7 @@ class _ProductPageState extends State<ProductPage> {
     );
   }
 
-  /// Dialog tambah/edit produk beserta foto kamera.
+  /// Dialog tambah/edit produk beserta foto (kamera/galeri/penyimpanan).
   Future<void> _openProductForm({Product? product}) async {
     final nameController = TextEditingController(text: product?.name ?? '');
     final priceController = TextEditingController(
@@ -256,7 +332,7 @@ class _ProductPageState extends State<ProductPage> {
         return StatefulBuilder(
           builder: (dialogCtx, setStateDialog) {
             Future<void> pickPhoto() async {
-              final photo = await _captureProductPhoto();
+              final photo = await _pickProductPhoto();
               if (photo == null) return;
               setStateDialog(() {
                 selectedPhotoBytes = photo;
@@ -281,7 +357,7 @@ class _ProductPageState extends State<ProductPage> {
                         ),
                         const SizedBox(height: 10),
                         ClayButton(
-                          label: 'Ambil Foto',
+                          label: 'Pilih Foto',
                           onPressed: isUploadingPhoto ? null : pickPhoto,
                           fullWidth: true,
                         ),

@@ -3,11 +3,14 @@ import 'package:flutter/foundation.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:provider/provider.dart';
 import 'package:fl_chart/fl_chart.dart';
+import 'package:url_launcher/url_launcher.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 import '../../core/services/location_service.dart';
 import '../../core/utils/currency_formatter.dart';
 import '../../core/utils/date_formatter.dart';
 import '../../providers/auth_provider.dart';
+import '../../providers/product_provider.dart';
+import '../../providers/stock_provider.dart';
 import '../../providers/transaction_provider.dart';
 import '../../theme/clay_colors.dart';
 import '../../widgets/clay_button.dart';
@@ -64,6 +67,8 @@ class _DashboardPageState extends State<DashboardPage> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       context.read<TransactionProvider>().loadTransactions();
       context.read<AuthProvider>().loadProfile();
+      context.read<ProductProvider>().loadProducts(onlyActive: false);
+      context.read<StockProvider>().loadMovements();
     });
   }
 
@@ -133,10 +138,67 @@ class _DashboardPageState extends State<DashboardPage> {
     }
   }
 
+  Future<void> _openGoogleMapsRoute() async {
+    final profile = context.read<AuthProvider>().profile;
+    final storeLat = profile?.storeLat;
+    final storeLng = profile?.storeLng;
+
+    if (storeLat == null || storeLng == null) {
+      _showSnackBar('Lokasi kedai belum tersedia.', success: false);
+      return;
+    }
+
+    final uri = Uri.parse(
+      'https://www.google.com/maps/dir/?api=1&destination=$storeLat,$storeLng&travelmode=driving',
+    );
+
+    final launched = await launchUrl(
+      uri,
+      mode: LaunchMode.externalApplication,
+    );
+
+    if (!launched) {
+      _showSnackBar('Tidak bisa membuka Google Maps.', success: false);
+    }
+  }
+
+  double _calcTotalByDay(List<dynamic> transactions, DateTime day) {
+    return transactions.where((t) {
+      final d = t.createdAt;
+      if (d == null) return false;
+      return d.year == day.year && d.month == day.month && d.day == day.day;
+    }).fold<double>(0, (sum, t) => sum + ((t.total as num).toDouble()));
+  }
+
+  double _calcRecentDaysTotal(List<dynamic> transactions, int days) {
+    final now = DateTime.now();
+    final start = DateTime(now.year, now.month, now.day)
+        .subtract(Duration(days: days - 1));
+    return transactions.where((t) {
+      final d = t.createdAt;
+      if (d == null) return false;
+      return !d.isBefore(start);
+    }).fold<double>(0, (sum, t) => sum + ((t.total as num).toDouble()));
+  }
+
+  double _calcPreviousDaysTotal(List<dynamic> transactions, int days) {
+    final now = DateTime.now();
+    final endCurrent = DateTime(now.year, now.month, now.day);
+    final endPrevious = endCurrent.subtract(Duration(days: days));
+    final startPrevious = endPrevious.subtract(Duration(days: days));
+    return transactions.where((t) {
+      final d = t.createdAt;
+      if (d == null) return false;
+      return !d.isBefore(startPrevious) && d.isBefore(endPrevious);
+    }).fold<double>(0, (sum, t) => sum + ((t.total as num).toDouble()));
+  }
+
   @override
   Widget build(BuildContext context) {
     final tx = context.watch<TransactionProvider>();
     final auth = context.watch<AuthProvider>();
+    final productProvider = context.watch<ProductProvider>();
+    final stockProvider = context.watch<StockProvider>();
     final profile = auth.profile;
     final hasSavedLocation = profile?.storeLat != null && profile?.storeLng != null;
 
@@ -167,18 +229,263 @@ class _DashboardPageState extends State<DashboardPage> {
     final last7Days = tx.last7Days;
     final transactions = tx.transactions;
     final has7DaysData = last7Days.any((e) => e.value > 0);
+    final products = productProvider.products;
+    final stockMap = stockProvider.stockMap;
+    final criticalProducts = products.where((p) {
+      final stock = stockMap[p.id] ?? 0;
+      return p.isActive && stock > 0 && stock <= 3;
+    }).toList()
+      ..sort((a, b) => (stockMap[a.id] ?? 0).compareTo(stockMap[b.id] ?? 0));
+    final nonActiveWithStock = products.where((p) {
+      final stock = stockMap[p.id] ?? 0;
+      return !p.isActive && stock > 0;
+    }).toList();
+    final recentTransactions = transactions.take(3).toList();
+    final topMenus = _computeTopMenus(transactions, limit: 3);
+    final yesterdayTotal = _calcTotalByDay(transactions, DateTime.now().subtract(const Duration(days: 1)));
+    final this7 = _calcRecentDaysTotal(transactions, 7);
+    final prev7 = _calcPreviousDaysTotal(transactions, 7);
+    final omzetDownVsYesterday = yesterdayTotal > 0 && todayTotal < yesterdayTotal;
+    final omzetDownVsLastWeek = prev7 > 0 && this7 < prev7;
 
     return RefreshIndicator(
       onRefresh: () => tx.loadTransactions(),
       child: ListView(
         padding: const EdgeInsets.all(16),
         children: [
+          // -- Ringkasan Real-time (Above the fold) --
+          ClayFadeSlide(
+            index: 0,
+            child: ClayCard(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  _SectionHeader(
+                    icon: Icons.flash_on_rounded,
+                    title: 'Ringkasan Real-time',
+                    color: ClayColors.primary,
+                  ),
+                  const SizedBox(height: 10),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: _QuickInfoChip(
+                          icon: Icons.payments_rounded,
+                          label: 'Omzet Hari Ini',
+                          value: formatRupiah(todayTotal),
+                          color: ClayColors.warning,
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: _QuickInfoChip(
+                          icon: Icons.receipt_long_rounded,
+                          label: 'Transaksi Terakhir',
+                          value: '${recentTransactions.length} item',
+                          color: ClayColors.success,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: _QuickInfoChip(
+                          icon: Icons.warning_amber_rounded,
+                          label: 'Stok Kritis',
+                          value: '${criticalProducts.length} menu',
+                          color: Colors.orange.shade700,
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: _QuickInfoChip(
+                          icon: Icons.local_fire_department_rounded,
+                          label: 'Menu Terlaris',
+                          value: topMenus.isEmpty
+                              ? 'Belum ada data'
+                              : '${topMenus.first.$1} (${topMenus.first.$2})',
+                          color: ClayColors.secondary,
+                        ),
+                      ),
+                    ],
+                  ),
+                  if (topMenus.isNotEmpty) ...[
+                    const SizedBox(height: 8),
+                    Wrap(
+                      spacing: 6,
+                      runSpacing: 6,
+                      children: topMenus.asMap().entries.map((entry) {
+                        final rank = entry.key + 1;
+                        final menu = entry.value;
+                        final rankColor = switch (rank) {
+                          1 => Colors.amber.shade700,
+                          2 => Colors.blueGrey,
+                          _ => Colors.deepOrange.shade400,
+                        };
+                        final menuName = menu.$1;
+                        return Tooltip(
+                          message: 'Klik untuk lihat detail penjualan menu',
+                          child: InkWell(
+                            borderRadius: BorderRadius.circular(10),
+                            onTap: () {
+                              final totalAll = _countMenuQty(
+                                transactions,
+                                menuName,
+                              );
+                              final total7Days = _countMenuQty(
+                                _filterRecentDaysTransactions(
+                                  transactions,
+                                  7,
+                                ),
+                                menuName,
+                              );
+                              showDialog<void>(
+                                context: context,
+                                builder: (ctx) => AlertDialog(
+                                  title: Text('Detail $menuName'),
+                                  content: Text(
+                                    'Total terjual: $totalAll\n'
+                                    '7 hari terakhir: $total7Days',
+                                  ),
+                                  actions: [
+                                    TextButton(
+                                      onPressed: () => Navigator.pop(ctx),
+                                      child: const Text('Tutup'),
+                                    ),
+                                  ],
+                                ),
+                              );
+                            },
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 8,
+                                vertical: 5,
+                              ),
+                              decoration: BoxDecoration(
+                                color: rankColor.withAlpha(25),
+                                borderRadius: BorderRadius.circular(10),
+                                border: Border.all(
+                                  color: rankColor.withAlpha(60),
+                                ),
+                              ),
+                              child: Text(
+                                '#$rank ${menu.$1} (${menu.$2})',
+                                style: TextStyle(
+                                  fontSize: 11,
+                                  color: rankColor,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                            ),
+                          ),
+                        );
+                      }).toList(),
+                    ),
+                  ],
+                  if (recentTransactions.isNotEmpty) ...[
+                    const SizedBox(height: 10),
+                    Text(
+                      'Transaksi terbaru:',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: ClayColors.textMuted,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+                    ...recentTransactions.map((t) {
+                      final date = t.createdAt != null
+                          ? '${t.createdAt!.day}/${t.createdAt!.month} ${t.createdAt!.hour.toString().padLeft(2, '0')}:${t.createdAt!.minute.toString().padLeft(2, '0')}'
+                          : '-';
+                      return Padding(
+                        padding: const EdgeInsets.only(bottom: 4),
+                        child: Text(
+                          '$date • ${formatRupiah(t.total)}',
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: ClayColors.textPrimary,
+                          ),
+                        ),
+                      );
+                    }),
+                  ],
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 16),
+
+          // -- Notifikasi Cerdas --
+          ClayFadeSlide(
+            index: 1,
+            child: ClayCard(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  _SectionHeader(
+                    icon: Icons.notifications_active_rounded,
+                    title: 'Notifikasi Cerdas',
+                    color: ClayColors.secondary,
+                  ),
+                  const SizedBox(height: 10),
+                  if (criticalProducts.isNotEmpty)
+                    _AlertTile(
+                      icon: Icons.inventory_2_rounded,
+                      color: Colors.orange.shade700,
+                      title: 'Stok hampir habis',
+                      message:
+                          '${criticalProducts.take(3).map((p) => '${p.name} (${stockMap[p.id] ?? 0})').join(', ')}',
+                    ),
+                  if (nonActiveWithStock.isNotEmpty)
+                    _AlertTile(
+                      icon: Icons.visibility_off_rounded,
+                      color: Colors.blueGrey,
+                      title: 'Menu nonaktif masih tersedia',
+                      message:
+                          '${nonActiveWithStock.take(3).map((p) => '${p.name} (${stockMap[p.id] ?? 0})').join(', ')}',
+                    ),
+                  if (omzetDownVsYesterday)
+                    _AlertTile(
+                      icon: Icons.trending_down_rounded,
+                      color: Colors.red.shade600,
+                      title: 'Omzet turun dibanding kemarin',
+                      message:
+                          'Hari ini ${formatRupiah(todayTotal)} vs kemarin ${formatRupiah(yesterdayTotal)}',
+                    ),
+                  if (omzetDownVsLastWeek)
+                    _AlertTile(
+                      icon: Icons.calendar_view_week_rounded,
+                      color: Colors.red.shade500,
+                      title: 'Omzet turun dibanding 7 hari sebelumnya',
+                      message:
+                          '7 hari ini ${formatRupiah(this7)} vs 7 hari sebelumnya ${formatRupiah(prev7)}',
+                    ),
+                  if (criticalProducts.isEmpty &&
+                      nonActiveWithStock.isEmpty &&
+                      !omzetDownVsYesterday &&
+                      !omzetDownVsLastWeek)
+                    Text(
+                      'Tidak ada alert penting saat ini. Performa operasional terlihat aman.',
+                      style: TextStyle(
+                        color: ClayColors.textMuted,
+                        fontSize: 12,
+                        height: 1.4,
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 16),
+
           // -- Summary Cards --
           Row(
             children: [
               Expanded(
                 child: ClayFadeSlide(
-                  index: 0,
+                  index: 2,
                   child: _StatCard(
                     icon: Icons.today_rounded,
                     title: 'Hari Ini',
@@ -190,7 +497,7 @@ class _DashboardPageState extends State<DashboardPage> {
               const SizedBox(width: 12),
               Expanded(
                 child: ClayFadeSlide(
-                  index: 1,
+                  index: 3,
                   child: _StatCard(
                     icon: Icons.calendar_month_rounded,
                     title: 'Bulan Ini',
@@ -205,7 +512,7 @@ class _DashboardPageState extends State<DashboardPage> {
 
           // -- 7 Hari Terakhir --
           ClayFadeSlide(
-            index: 2,
+            index: 4,
             child: ClayCard(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -233,7 +540,7 @@ class _DashboardPageState extends State<DashboardPage> {
 
           // -- Grafik Keuntungan Tahun Ini (per bulan) --
           ClayFadeSlide(
-            index: 3,
+            index: 5,
             child: ClayCard(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -264,7 +571,7 @@ class _DashboardPageState extends State<DashboardPage> {
 
           // -- Grafik Detail Bulan (with month filter) --
           ClayFadeSlide(
-            index: 4,
+            index: 6,
             child: ClayCard(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -318,7 +625,7 @@ class _DashboardPageState extends State<DashboardPage> {
 
           // -- Recent Transactions --
           ClayFadeSlide(
-            index: 5,
+            index: 7,
             child: ClayCard(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -393,7 +700,7 @@ class _DashboardPageState extends State<DashboardPage> {
 
           // -- Lokasi Toko Kami --
           ClayFadeSlide(
-            index: 6,
+            index: 8,
             child: ClayCard(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -467,6 +774,17 @@ class _DashboardPageState extends State<DashboardPage> {
                       ),
                     ),
                   ],
+                  if (hasSavedLocation) ...[
+                    const SizedBox(height: 8),
+                    Text(
+                      'Jarak & estimasi menggunakan Google Maps (real-time traffic).',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: ClayColors.textMuted,
+                        height: 1.4,
+                      ),
+                    ),
+                  ],
                   const SizedBox(height: 12),
                   ClayButton(
                     label: _isDetectingLocation
@@ -475,6 +793,14 @@ class _DashboardPageState extends State<DashboardPage> {
                     onPressed: _isDetectingLocation ? null : _detectStoreLocation,
                     fullWidth: true,
                   ),
+                  if (hasSavedLocation) ...[
+                    const SizedBox(height: 8),
+                    ClayButton(
+                      label: 'Buka di Google Maps',
+                      onPressed: _openGoogleMapsRoute,
+                      fullWidth: true,
+                    ),
+                  ],
                   const SizedBox(height: 12),
                   SizedBox(
                     height: 220,
@@ -523,6 +849,111 @@ class _DashboardPageState extends State<DashboardPage> {
         ],
       ),
     );
+  }
+}
+
+List<(String, int)> _computeTopMenus(
+  List<dynamic> transactions, {
+  int limit = 3,
+}) {
+  final freq = <String, int>{};
+
+  for (final tx in transactions) {
+    final dynamic items = _extractTransactionItems(tx);
+    if (items is! List) continue;
+
+    for (final rawItem in items) {
+      final parsed = _parseItem(rawItem);
+      if (parsed == null) continue;
+      final (name, qty) = parsed;
+      if (name.isEmpty || qty <= 0) continue;
+      freq[name] = (freq[name] ?? 0) + qty;
+    }
+  }
+
+  final sorted = freq.entries.toList()
+    ..sort((a, b) => b.value.compareTo(a.value));
+  return sorted.take(limit).map((e) => (e.key, e.value)).toList();
+}
+
+List<dynamic> _filterRecentDaysTransactions(List<dynamic> transactions, int days) {
+  final now = DateTime.now();
+  final start = DateTime(now.year, now.month, now.day)
+      .subtract(Duration(days: days - 1));
+  return transactions.where((t) {
+    final d = t.createdAt;
+    if (d == null) return false;
+    return !d.isBefore(start);
+  }).toList();
+}
+
+int _countMenuQty(List<dynamic> transactions, String menuName) {
+  var total = 0;
+  for (final tx in transactions) {
+    final dynamic items = _extractTransactionItems(tx);
+    if (items is! List) continue;
+    for (final rawItem in items) {
+      final parsed = _parseItem(rawItem);
+      if (parsed == null) continue;
+      final (name, qty) = parsed;
+      if (name.toLowerCase() == menuName.toLowerCase()) {
+        total += qty;
+      }
+    }
+  }
+  return total;
+}
+
+dynamic _extractTransactionItems(dynamic tx) {
+  try {
+    final dynamic itemsField = tx.items;
+    if (itemsField != null) return itemsField;
+  } catch (_) {}
+
+  try {
+    final dynamic cartItemsField = tx.cartItems;
+    if (cartItemsField != null) return cartItemsField;
+  } catch (_) {}
+
+  try {
+    if (tx is Map<String, dynamic>) {
+      return tx['items'] ?? tx['cart_items'];
+    }
+  } catch (_) {}
+
+  return null;
+}
+
+(String, int)? _parseItem(dynamic rawItem) {
+  if (rawItem == null) return null;
+
+  if (rawItem is Map<String, dynamic>) {
+    final name = (rawItem['name'] ??
+            rawItem['product_name'] ??
+            rawItem['menu_name'] ??
+            rawItem['title'])
+        ?.toString()
+        .trim();
+    final qtyNum = rawItem['qty'] ??
+        rawItem['quantity'] ??
+        rawItem['count'] ??
+        rawItem['jumlah'] ??
+        1;
+    final qty = qtyNum is num ? qtyNum.toInt() : int.tryParse(qtyNum.toString()) ?? 1;
+    if (name == null || name.isEmpty) return null;
+    return (name, qty);
+  }
+
+  try {
+    final dynamic name = rawItem.name;
+    final dynamic qtyRaw = rawItem.qty ?? rawItem.quantity ?? rawItem.count ?? 1;
+    final qty = qtyRaw is num ? qtyRaw.toInt() : int.tryParse(qtyRaw.toString()) ?? 1;
+    if (name == null) return null;
+    final text = name.toString().trim();
+    if (text.isEmpty) return null;
+    return (text, qty);
+  } catch (_) {
+    return null;
   }
 }
 
@@ -1043,6 +1474,121 @@ class _EmptyChart extends StatelessWidget {
             message,
             textAlign: TextAlign.center,
             style: TextStyle(fontSize: 13, color: Colors.grey.shade400),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _QuickInfoChip extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final String value;
+  final Color color;
+
+  const _QuickInfoChip({
+    required this.icon,
+    required this.label,
+    required this.value,
+    required this.color,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: color.withAlpha(25),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Row(
+        children: [
+          Icon(icon, size: 16, color: color),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  label,
+                  style: TextStyle(
+                    fontSize: 10,
+                    color: ClayColors.textMuted,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  value,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: ClayColors.textPrimary,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _AlertTile extends StatelessWidget {
+  final IconData icon;
+  final Color color;
+  final String title;
+  final String message;
+
+  const _AlertTile({
+    required this.icon,
+    required this.color,
+    required this.title,
+    required this.message,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: color.withAlpha(18),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: color.withAlpha(60)),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(icon, size: 16, color: color),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: color,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  message,
+                  style: TextStyle(
+                    fontSize: 11,
+                    color: ClayColors.textPrimary,
+                    height: 1.35,
+                  ),
+                ),
+              ],
+            ),
           ),
         ],
       ),

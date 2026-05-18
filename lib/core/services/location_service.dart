@@ -1,6 +1,12 @@
 import 'package:geolocator/geolocator.dart';
 import '../services/supabase_service.dart';
 
+enum TravelMode {
+  walking,
+  motorcycle,
+  car,
+}
+
 class LocationService {
   final _supabase = SupabaseService();
 
@@ -76,5 +82,48 @@ class LocationService {
       'lat': lat,
       'lng': lng,
     };
+  }
+
+  /// Hitung jarak (KM) dari posisi user ke kedai.
+  double calculateDistanceKm({
+    required double userLat,
+    required double userLng,
+    required double storeLat,
+    required double storeLng,
+  }) {
+    final meters = Geolocator.distanceBetween(
+      userLat,
+      userLng,
+      storeLat,
+      storeLng,
+    );
+    return meters / 1000;
+  }
+
+  /// Estimasi menit tempuh berdasarkan mode perjalanan.
+  int estimateTravelMinutes({
+    required double distanceKm,
+    TravelMode mode = TravelMode.motorcycle,
+  }) {
+    if (distanceKm <= 0) return 0;
+
+    // Kecepatan rata-rata perkiraan dalam kota.
+    final speedKmPerHour = switch (mode) {
+      TravelMode.walking => 5.0,
+      TravelMode.motorcycle => 30.0,
+      TravelMode.car => 25.0,
+    };
+
+    final minutes = (distanceKm / speedKmPerHour) * 60;
+    return minutes.ceil();
+  }
+
+  /// Label ringkas ETA, contoh: "12 menit".
+  String formatEta(int minutes) {
+    if (minutes < 60) return '$minutes menit';
+    final hours = minutes ~/ 60;
+    final rem = minutes % 60;
+    if (rem == 0) return '$hours jam';
+    return '$hours jam $rem menit';
   }
 }

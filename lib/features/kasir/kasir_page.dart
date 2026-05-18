@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../core/services/local_notification_service.dart';
@@ -30,6 +31,11 @@ class _KasirPageState extends State<KasirPage>
   ];
 
   bool _cartExpanded = true;
+  bool _isRepeatingLastOrder = false;
+  bool _showQuickPanel = true;
+  String _searchQuery = '';
+  final List<String> _recentProductIds = [];
+  final FocusNode _shortcutFocusNode = FocusNode();
   late final AnimationController _cartAnim;
   late final Animation<double> _cartCurve;
 
@@ -47,12 +53,14 @@ class _KasirPageState extends State<KasirPage>
       // Muat SEMUA produk (aktif & nonaktif) supaya bisa tampil label stok habis
       context.read<ProductProvider>().loadProducts(onlyActive: false);
       context.read<StockProvider>().loadMovements();
+      context.read<TransactionProvider>().loadTransactions();
     });
   }
 
   @override
   void dispose() {
     _cartAnim.dispose();
+    _shortcutFocusNode.dispose();
     super.dispose();
   }
 
@@ -74,6 +82,22 @@ class _KasirPageState extends State<KasirPage>
       ..sort();
     ordered.addAll(extras);
     return ordered;
+  }
+
+  void _rememberRecentProduct(String productId) {
+    _recentProductIds.remove(productId);
+    _recentProductIds.insert(0, productId);
+    if (_recentProductIds.length > 8) {
+      _recentProductIds.removeRange(8, _recentProductIds.length);
+    }
+  }
+
+  void _clearQuickSearchState() {
+    setState(() {
+      _searchQuery = '';
+      _recentProductIds.clear();
+      _showQuickPanel = false;
+    });
   }
 
   /// Cegah qty melebihi stok tersedia dan tampilkan warning jika perlu.
@@ -100,6 +124,7 @@ class _KasirPageState extends State<KasirPage>
       return false;
     }
     cart.addItem(product);
+    _rememberRecentProduct(product.id);
     return true;
   }
 
@@ -115,6 +140,102 @@ class _KasirPageState extends State<KasirPage>
       entry.value.sort((a, b) => a.name.compareTo(b.name));
     }
     return map;
+  }
+
+  Future<void> _repeatLastOrder({
+    required CartProvider cart,
+    required List<Product> products,
+    required Map<String, int> stockMap,
+  }) async {
+    final txProvider = context.read<TransactionProvider>();
+    final messenger = ScaffoldMessenger.of(context);
+    final latest = txProvider.transactions.isNotEmpty
+        ? txProvider.transactions.first
+        : null;
+    if (latest == null) {
+      messenger.showSnackBar(
+        const SnackBar(
+          content: Text('Belum ada transaksi terakhir untuk diulang.'),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+      return;
+    }
+
+    if (_isRepeatingLastOrder) return;
+    setState(() => _isRepeatingLastOrder = true);
+
+    try {
+      cart.clear();
+      final productById = {for (final p in products) p.id: p};
+      final dynamic itemsRaw = _extractTransactionItems(latest);
+      if (itemsRaw is! List || itemsRaw.isEmpty) {
+        messenger.showSnackBar(
+          const SnackBar(
+            content: Text('Data item transaksi terakhir tidak ditemukan.'),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+        return;
+      }
+
+      var addedCount = 0;
+      for (final raw in itemsRaw) {
+        final parsed = _parseRepeatOrderItem(raw);
+        if (parsed == null) continue;
+        final productId = parsed.$1;
+        final qty = parsed.$2;
+        final product = productById[productId];
+        if (product == null) continue;
+        if (!product.isActive) continue;
+        final stock = stockMap[product.id] ?? 0;
+        if (stock <= 0) continue;
+        final safeQty = qty > stock ? stock : qty;
+        for (var i = 0; i < safeQty; i++) {
+          cart.addItem(product);
+        }
+        _rememberRecentProduct(product.id);
+        addedCount += safeQty;
+      }
+
+      if (!mounted) return;
+      messenger.showSnackBar(
+        SnackBar(
+          content: Text(
+            addedCount > 0
+                ? 'Order terakhir berhasil dimuat ($addedCount item).'
+                : 'Tidak ada item valid yang bisa dimuat ulang.',
+          ),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    } finally {
+      if (mounted) {
+        setState(() => _isRepeatingLastOrder = false);
+      }
+    }
+  }
+
+  dynamic _extractTransactionItems(dynamic tx) {
+    try {
+      final dynamic itemsField = tx.items;
+      if (itemsField != null) return itemsField;
+    } catch (_) {}
+    try {
+      if (tx is Map<String, dynamic>) return tx['items'];
+    } catch (_) {}
+    return null;
+  }
+
+  (String, int)? _parseRepeatOrderItem(dynamic raw) {
+    if (raw is Map<String, dynamic>) {
+      final id = (raw['product_id'] ?? raw['productId'])?.toString();
+      final qtyRaw = raw['qty'] ?? raw['quantity'] ?? raw['count'] ?? 1;
+      final qty = qtyRaw is num ? qtyRaw.toInt() : int.tryParse('$qtyRaw') ?? 1;
+      if (id == null || id.isEmpty || qty <= 0) return null;
+      return (id, qty);
+    }
+    return null;
   }
 
   Future<void> _checkout(CartProvider cart) async {
@@ -222,6 +343,7 @@ class _KasirPageState extends State<KasirPage>
     final cart = context.watch<CartProvider>();
     final productProvider = context.watch<ProductProvider>();
     final stockProvider = context.watch<StockProvider>();
+    final txProvider = context.watch<TransactionProvider>();
 
     if (productProvider.isLoading || stockProvider.isLoading) {
       return const Center(child: CircularProgressIndicator());
@@ -254,23 +376,230 @@ class _KasirPageState extends State<KasirPage>
     final stockMap = stockProvider.stockMap;
     final grouped = _groupProducts(products);
     final categories = _orderedCategories(grouped.keys);
+    final recentProducts = _recentProductIds
+        .map((id) {
+          try {
+            return products.firstWhere((p) => p.id == id);
+          } catch (_) {
+            return null;
+          }
+        })
+        .whereType<Product>()
+        .toList();
 
-    return Column(
-      children: [
-        Expanded(
-          child: ListView(
-            padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
-            children: _buildMenuWidgets(
-              context,
-              categories,
-              grouped,
-              cart,
-              stockMap,
+    final quickSearchResults = products
+        .where(
+          (p) =>
+              p.isActive &&
+              (stockMap[p.id] ?? 0) > 0 &&
+              (_searchQuery.trim().isEmpty ||
+                  p.name.toLowerCase().contains(_searchQuery.toLowerCase())),
+        )
+        .take(8)
+        .toList();
+
+    const digitKeys = <LogicalKeyboardKey>[
+      LogicalKeyboardKey.digit1,
+      LogicalKeyboardKey.digit2,
+      LogicalKeyboardKey.digit3,
+      LogicalKeyboardKey.digit4,
+      LogicalKeyboardKey.digit5,
+      LogicalKeyboardKey.digit6,
+      LogicalKeyboardKey.digit7,
+      LogicalKeyboardKey.digit8,
+      LogicalKeyboardKey.digit9,
+    ];
+    const numpadKeys = <LogicalKeyboardKey>[
+      LogicalKeyboardKey.numpad1,
+      LogicalKeyboardKey.numpad2,
+      LogicalKeyboardKey.numpad3,
+      LogicalKeyboardKey.numpad4,
+      LogicalKeyboardKey.numpad5,
+      LogicalKeyboardKey.numpad6,
+      LogicalKeyboardKey.numpad7,
+      LogicalKeyboardKey.numpad8,
+      LogicalKeyboardKey.numpad9,
+    ];
+
+    final shortcuts = <ShortcutActivator, Intent>{};
+    for (var i = 0; i < quickSearchResults.length && i < 9; i++) {
+      shortcuts[SingleActivator(digitKeys[i])] = _QuickAddIntent(i);
+      shortcuts[SingleActivator(numpadKeys[i])] = _QuickAddIntent(i);
+    }
+
+    return Focus(
+      autofocus: true,
+      focusNode: _shortcutFocusNode,
+      child: Shortcuts(
+        shortcuts: shortcuts,
+        child: Actions(
+          actions: {
+            _QuickAddIntent: CallbackAction<_QuickAddIntent>(
+              onInvoke: (intent) {
+                final idx = intent.index;
+                if (idx < 0 || idx >= quickSearchResults.length) return null;
+                _tryIncreaseQty(
+                  context: context,
+                  cart: cart,
+                  product: quickSearchResults[idx],
+                  stockMap: stockMap,
+                );
+                return null;
+              },
             ),
+          },
+          child: Column(
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 12, 16, 6),
+                child: !_showQuickPanel
+                    ? Align(
+                        alignment: Alignment.centerLeft,
+                        child: OutlinedButton.icon(
+                          onPressed: () => setState(() => _showQuickPanel = true),
+                          icon: const Icon(Icons.search_rounded, size: 16),
+                          label: const Text('Buka Cari Menu Cepat'),
+                        ),
+                      )
+                    : ClayCard(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              children: [
+                                Expanded(
+                                  child: TextField(
+                                    onChanged: (v) =>
+                                        setState(() => _searchQuery = v),
+                                    decoration: InputDecoration(
+                                      prefixIcon: const Icon(Icons.search_rounded),
+                                      hintText: 'Cari menu cepat...',
+                                      suffixIcon: _searchQuery.isEmpty
+                                          ? null
+                                          : IconButton(
+                                              onPressed: () =>
+                                                  setState(() => _searchQuery = ''),
+                                              icon: const Icon(Icons.close_rounded),
+                                            ),
+                                    ),
+                                  ),
+                                ),
+                                IconButton(
+                                  tooltip: 'Tutup panel cepat & hapus riwayat',
+                                  onPressed: _clearQuickSearchState,
+                                  icon: const Icon(Icons.close_fullscreen_rounded),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 8),
+                            if (quickSearchResults.isNotEmpty) ...[
+                              Text(
+                                'Quick add (hotkey 1-9)',
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  color: ClayColors.textMuted,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                              const SizedBox(height: 6),
+                              Wrap(
+                                spacing: 6,
+                                runSpacing: 6,
+                                children:
+                                    quickSearchResults.asMap().entries.map((entry) {
+                                  final index = entry.key;
+                                  final p = entry.value;
+                                  final hotkey = index < 9 ? ' [${index + 1}]' : '';
+                                  return ActionChip(
+                                    label: Text('${p.name}$hotkey'),
+                                    onPressed: () {
+                                      _tryIncreaseQty(
+                                        context: context,
+                                        cart: cart,
+                                        product: p,
+                                        stockMap: stockMap,
+                                      );
+                                    },
+                                  );
+                                }).toList(),
+                              ),
+                              const SizedBox(height: 8),
+                            ],
+                            if (recentProducts.isNotEmpty) ...[
+                              Row(
+                                children: [
+                                  Text(
+                                    'Recent items',
+                                    style: TextStyle(
+                                      fontSize: 12,
+                                      color: ClayColors.textMuted,
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
+                                  const Spacer(),
+                                  TextButton(
+                                    onPressed: () =>
+                                        setState(() => _recentProductIds.clear()),
+                                    child: const Text('Hapus Riwayat'),
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 6),
+                              Wrap(
+                                spacing: 6,
+                                runSpacing: 6,
+                                children: recentProducts.take(6).map((p) {
+                                  return ActionChip(
+                                    avatar: const Icon(Icons.history, size: 14),
+                                    label: Text(p.name),
+                                    onPressed: () {
+                                      _tryIncreaseQty(
+                                        context: context,
+                                        cart: cart,
+                                        product: p,
+                                        stockMap: stockMap,
+                                      );
+                                    },
+                                  );
+                                }).toList(),
+                              ),
+                              const SizedBox(height: 8),
+                            ],
+                            ClayButton(
+                              label: _isRepeatingLastOrder
+                                  ? 'Memuat order terakhir...'
+                                  : 'Ulang Order Terakhir',
+                              onPressed: _isRepeatingLastOrder || txProvider.isLoading
+                                  ? null
+                                  : () => _repeatLastOrder(
+                                        cart: cart,
+                                        products: products,
+                                        stockMap: stockMap,
+                                      ),
+                              fullWidth: true,
+                            ),
+                          ],
+                        ),
+                      ),
+              ),
+              Expanded(
+                child: ListView(
+                  padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+                  children: _buildMenuWidgets(
+                    context,
+                    categories,
+                    grouped,
+                    cart,
+                    stockMap,
+                    _searchQuery,
+                  ),
+                ),
+              ),
+              _buildCartPanel(context, cart, stockMap),
+            ],
           ),
         ),
-        _buildCartPanel(context, cart, stockMap),
-      ],
+      ),
     );
   }
 
@@ -280,12 +609,19 @@ class _KasirPageState extends State<KasirPage>
     Map<String, List<Product>> grouped,
     CartProvider cart,
     Map<String, int> stockMap,
+    String searchQuery,
   ) {
     final widgets = <Widget>[];
     var itemIndex = 0;
+    final normalizedSearch = searchQuery.trim().toLowerCase();
 
     for (final category in categories) {
-      final items = grouped[category] ?? [];
+      final allItems = grouped[category] ?? [];
+      final items = normalizedSearch.isEmpty
+          ? allItems
+          : allItems
+                .where((p) => p.name.toLowerCase().contains(normalizedSearch))
+                .toList();
       if (items.isEmpty) continue;
 
       widgets.add(
@@ -752,6 +1088,11 @@ class _KasirPageState extends State<KasirPage>
       ),
     );
   }
+}
+
+class _QuickAddIntent extends Intent {
+  final int index;
+  const _QuickAddIntent(this.index);
 }
 
 class _SmallIconBtn extends StatelessWidget {
