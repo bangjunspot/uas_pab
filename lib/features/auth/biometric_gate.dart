@@ -135,17 +135,14 @@ class _BiometricGateState extends State<BiometricGate> {
                   Text(
                     'Verifikasi Identitas',
                     style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                          fontWeight: FontWeight.w700,
-                        ),
+                      fontWeight: FontWeight.w700,
+                    ),
                     textAlign: TextAlign.center,
                   ),
                   const SizedBox(height: 8),
                   Text(
                     'Sentuh sensor sidik jari untuk membuka Laporan Keuangan',
-                    style: TextStyle(
-                      color: ClayColors.textMuted,
-                      fontSize: 13,
-                    ),
+                    style: TextStyle(color: ClayColors.textMuted, fontSize: 13),
                     textAlign: TextAlign.center,
                   ),
                   const SizedBox(height: 24),

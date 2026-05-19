@@ -146,7 +146,9 @@ class AuthProvider extends ChangeNotifier {
   }
 
   /// Jalankan verifikasi biometrik perangkat.
-  Future<bool> verifyBiometric() async {
+  Future<bool> verifyBiometric({
+    String reason = 'Verifikasi sidik jari untuk masuk ke BANGJUN SPOT',
+  }) async {
     error = null;
     notifyListeners();
 
@@ -159,7 +161,7 @@ class AuthProvider extends ChangeNotifier {
       }
 
       final authenticated = await auth.authenticate(
-        localizedReason: 'Verifikasi sidik jari untuk masuk ke BANGJUN SPOT',
+        localizedReason: reason,
         options: const AuthenticationOptions(
           biometricOnly: false,
           stickyAuth: true,

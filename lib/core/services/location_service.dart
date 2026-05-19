@@ -1,11 +1,7 @@
 import 'package:geolocator/geolocator.dart';
 import '../services/supabase_service.dart';
 
-enum TravelMode {
-  walking,
-  motorcycle,
-  car,
-}
+enum TravelMode { walking, motorcycle, car }
 
 class LocationService {
   final _supabase = SupabaseService();
@@ -41,9 +37,7 @@ class LocationService {
     }
 
     return Geolocator.getCurrentPosition(
-      locationSettings: const LocationSettings(
-        accuracy: LocationAccuracy.high,
-      ),
+      locationSettings: const LocationSettings(accuracy: LocationAccuracy.high),
     );
   }
 
@@ -58,10 +52,12 @@ class LocationService {
     required double lat,
     required double lng,
   }) async {
-    final updated = await _supabase.client.from('profiles').update({
-      'store_lat': lat,
-      'store_lng': lng,
-    }).eq('id', userId).select('id').maybeSingle();
+    final updated = await _supabase.client
+        .from('profiles')
+        .update({'store_lat': lat, 'store_lng': lng})
+        .eq('id', userId)
+        .select('id')
+        .maybeSingle();
 
     // RLS bisa membuat update "diam-diam gagal" (0 row terpengaruh tanpa error).
     if (updated == null) {
@@ -85,10 +81,7 @@ class LocationService {
     final lng = (data['store_lng'] as num?)?.toDouble();
     if (lat == null || lng == null) return null;
 
-    return {
-      'lat': lat,
-      'lng': lng,
-    };
+    return {'lat': lat, 'lng': lng};
   }
 
   /// Hitung jarak (KM) dari posisi user ke kedai.

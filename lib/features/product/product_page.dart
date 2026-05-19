@@ -515,6 +515,7 @@ class _ProductPageState extends State<ProductPage> {
           : selectedCategory.trim(),
       price: price,
       imageUrl: currentImageUrl,
+      minStock: product?.minStock ?? 3,
       isActive: isActive,
       createdAt: product?.createdAt,
     );
@@ -561,6 +562,7 @@ class _ProductPageState extends State<ProductPage> {
       category: product.category,
       price: product.price,
       imageUrl: product.imageUrl,
+      minStock: product.minStock,
       isActive: newValue,
       createdAt: product.createdAt,
     );

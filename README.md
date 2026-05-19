@@ -165,6 +165,7 @@ Dirancang untuk kecepatan melayani pembeli — meminimalkan tap dan waktu per tr
 | **Notifikasi Lokal** | local_notification_service (custom) |
 | **Preferensi Lokal** | shared_preferences |
 
+
 ---
 
 ## 🗂️ Struktur Folder
@@ -245,6 +246,9 @@ assets/
 Database dikelola di **Supabase PostgreSQL** dengan **Row Level Security (RLS)** aktif di semua tabel. Skema berikut adalah struktur aktual yang digunakan aplikasi.
 
 ### Tabel `profiles`
+
+> Catatan: schema ini mengikuti `supabase/run_all.sql` versi saat ini (termasuk tabel `cashier_shifts` dan `attendance_records`).
+
 
 Menyimpan profil pengguna dan koordinat lokasi kedai. Berelasi langsung ke `auth.users`.
 

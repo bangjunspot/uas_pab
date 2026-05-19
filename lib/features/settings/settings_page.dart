@@ -475,7 +475,9 @@ class _SettingsPageState extends State<SettingsPage> {
                                       ),
                                       if (isSelf)
                                         Container(
-                                          margin: const EdgeInsets.only(left: 6),
+                                          margin: const EdgeInsets.only(
+                                            left: 6,
+                                          ),
                                           padding: const EdgeInsets.symmetric(
                                             horizontal: 6,
                                             vertical: 2,
@@ -556,4 +558,3 @@ class _SettingsPageState extends State<SettingsPage> {
     );
   }
 }
-

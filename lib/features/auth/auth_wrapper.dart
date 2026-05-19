@@ -34,8 +34,11 @@ class _AuthWrapperState extends State<AuthWrapper> {
                   SnackBar(
                     content: const Row(
                       children: [
-                        Icon(Icons.logout_rounded,
-                            color: Colors.white, size: 18),
+                        Icon(
+                          Icons.logout_rounded,
+                          color: Colors.white,
+                          size: 18,
+                        ),
                         SizedBox(width: 8),
                         Text('Berhasil logout. Sampai jumpa!'),
                       ],
@@ -43,7 +46,8 @@ class _AuthWrapperState extends State<AuthWrapper> {
                     backgroundColor: ClayColors.primary,
                     behavior: SnackBarBehavior.floating,
                     shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12)),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
                     duration: const Duration(seconds: 3),
                   ),
                 );
@@ -70,8 +74,11 @@ class _AuthWrapperState extends State<AuthWrapper> {
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      const Icon(Icons.error_outline,
-                          size: 48, color: Colors.red),
+                      const Icon(
+                        Icons.error_outline,
+                        size: 48,
+                        color: Colors.red,
+                      ),
                       const SizedBox(height: 8),
                       Text(auth.error ?? 'Gagal memuat profil'),
                       const SizedBox(height: 12),

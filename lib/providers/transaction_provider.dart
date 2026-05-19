@@ -52,8 +52,9 @@ class TransactionProvider extends ChangeNotifier {
     }
   }
 
-  Future<void> createTransaction({
+  Future<String> createTransaction({
     required String cashierId,
+    String? shiftId,
     required double total,
     required List<Map<String, dynamic>> items,
   }) async {
@@ -64,6 +65,7 @@ class TransactionProvider extends ChangeNotifier {
 
     final transactionId = await _service.createTransaction(
       cashierId: cashierId,
+      shiftId: shiftId,
       total: total,
     );
     await _service.createTransactionItems(
@@ -75,6 +77,7 @@ class TransactionProvider extends ChangeNotifier {
       items: items,
     );
     await loadTransactions();
+    return transactionId;
   }
 
   void setMonthFilter(int month, int year) {

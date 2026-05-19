@@ -1,11 +1,18 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:intl/intl.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:pdf/widgets.dart' as pw;
 import 'package:provider/provider.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../../core/services/local_notification_service.dart';
 import '../../core/utils/currency_formatter.dart';
 import '../../models/product.dart';
 import '../../providers/cart_provider.dart';
+import '../../providers/auth_provider.dart';
+import '../../providers/cashier_shift_provider.dart';
 import '../../providers/product_provider.dart';
 import '../../providers/stock_provider.dart';
 import '../../providers/transaction_provider.dart';
@@ -54,6 +61,10 @@ class _KasirPageState extends State<KasirPage>
       context.read<ProductProvider>().loadProducts(onlyActive: false);
       context.read<StockProvider>().loadMovements();
       context.read<TransactionProvider>().loadTransactions();
+      final profile = context.read<AuthProvider>().profile;
+      if (profile != null) {
+        context.read<CashierShiftProvider>().load(profile.id);
+      }
     });
   }
 
@@ -126,6 +137,264 @@ class _KasirPageState extends State<KasirPage>
     cart.addItem(product);
     _rememberRecentProduct(product.id);
     return true;
+  }
+
+  double _parseRupiahInput(String value) {
+    return double.tryParse(value.replaceAll(RegExp(r'[^\d]'), '')) ?? 0;
+  }
+
+  Future<void> _openShiftDialog() async {
+    final auth = context.read<AuthProvider>();
+    final profile = auth.profile;
+    if (profile == null) return;
+
+    final controller = TextEditingController();
+    final result = await showDialog<double>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: const Text('Mulai Shift'),
+        content: TextField(
+          controller: controller,
+          keyboardType: TextInputType.number,
+          decoration: const InputDecoration(
+            labelText: 'Modal kas awal',
+            prefixText: 'Rp ',
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Batal'),
+          ),
+          FilledButton(
+            onPressed: () =>
+                Navigator.pop(ctx, _parseRupiahInput(controller.text)),
+            child: const Text('Mulai'),
+          ),
+        ],
+      ),
+    );
+
+    if (result == null || !mounted) return;
+    final provider = context.read<CashierShiftProvider>();
+    final success = await provider.open(
+      cashierId: profile.id,
+      openingCash: result,
+    );
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          success
+              ? 'Shift dimulai. Modal awal ${formatRupiah(result)}'
+              : 'Gagal mulai shift: ${provider.error}',
+        ),
+        backgroundColor: success ? ClayColors.success : Colors.red,
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
+  }
+
+  Future<void> _closeShiftDialog() async {
+    final provider = context.read<CashierShiftProvider>();
+    final shift = provider.activeShift;
+    if (shift == null) return;
+
+    final cashController = TextEditingController(
+      text: provider.expectedCash.toInt().toString(),
+    );
+    final noteController = TextEditingController();
+    final result = await showDialog<(double, String?)>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: const Text('Tutup Shift'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('Jumlah transaksi: ${provider.shiftTransactionCount}'),
+            Text('Total transaksi: ${formatRupiah(provider.shiftSalesTotal)}'),
+            Text('Uang seharusnya: ${formatRupiah(provider.expectedCash)}'),
+            const SizedBox(height: 12),
+            TextField(
+              controller: cashController,
+              keyboardType: TextInputType.number,
+              decoration: const InputDecoration(
+                labelText: 'Uang fisik di laci',
+                prefixText: 'Rp ',
+              ),
+            ),
+            const SizedBox(height: 10),
+            TextField(
+              controller: noteController,
+              maxLines: 2,
+              decoration: const InputDecoration(labelText: 'Catatan opsional'),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Batal'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, (
+              _parseRupiahInput(cashController.text),
+              noteController.text.trim().isEmpty
+                  ? null
+                  : noteController.text.trim(),
+            )),
+            child: const Text('Tutup'),
+          ),
+        ],
+      ),
+    );
+
+    if (result == null || !mounted) return;
+    final expectedCash = provider.expectedCash;
+    final success = await provider.close(
+      closingCash: result.$1,
+      note: result.$2,
+    );
+    if (!mounted) return;
+    final difference = result.$1 - expectedCash;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          success
+              ? 'Shift ditutup. Selisih ${formatRupiah(difference)}'
+              : 'Gagal tutup shift: ${provider.error}',
+        ),
+        backgroundColor: success ? ClayColors.success : Colors.red,
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
+  }
+
+  void _showProductDetail(
+    BuildContext context, {
+    required Product product,
+    required int stockQty,
+    required bool canOrder,
+    required int qtyInCart,
+  }) {
+    showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        titlePadding: const EdgeInsets.fromLTRB(20, 18, 12, 0),
+        title: Row(
+          children: [
+            Expanded(
+              child: Text(
+                product.name,
+                style: const TextStyle(fontWeight: FontWeight.w800),
+              ),
+            ),
+            IconButton(
+              tooltip: 'Tutup',
+              onPressed: () => Navigator.pop(ctx),
+              icon: const Icon(Icons.close_rounded),
+            ),
+          ],
+        ),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              ClipRRect(
+                borderRadius: BorderRadius.circular(14),
+                child: product.imageUrl != null && product.imageUrl!.isNotEmpty
+                    ? Image.network(
+                        product.imageUrl!,
+                        height: 210,
+                        width: double.infinity,
+                        fit: BoxFit.cover,
+                        errorBuilder: (context, error, stackTrace) =>
+                            _DetailImageFallback(),
+                      )
+                    : const _DetailImageFallback(),
+              ),
+              const SizedBox(height: 14),
+              _DetailRow(
+                icon: Icons.category_rounded,
+                label: 'Kategori',
+                value: product.category?.trim().isNotEmpty == true
+                    ? product.category!.trim()
+                    : 'Lainnya',
+              ),
+              _DetailRow(
+                icon: Icons.payments_rounded,
+                label: 'Harga',
+                value: formatRupiah(product.price),
+              ),
+              _DetailRow(
+                icon: Icons.inventory_2_rounded,
+                label: 'Stok',
+                value: '$stockQty tersedia',
+              ),
+              _DetailRow(
+                icon: Icons.shopping_bag_rounded,
+                label: 'Di pesanan',
+                value: '$qtyInCart item',
+              ),
+              const SizedBox(height: 8),
+              Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 6,
+                ),
+                decoration: BoxDecoration(
+                  color: canOrder
+                      ? ClayColors.success.withAlpha(25)
+                      : Colors.red.withAlpha(22),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Text(
+                  canOrder
+                      ? 'Menu tersedia untuk dipesan'
+                      : stockQty <= 0
+                      ? 'Stok menu sedang habis'
+                      : 'Menu sedang nonaktif',
+                  style: TextStyle(
+                    color: canOrder ? ClayColors.success : Colors.red.shade600,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          if (canOrder)
+            ClayButton(
+              label: 'Tambah ke Pesanan',
+              onPressed: () {
+                Navigator.pop(ctx);
+                final added = _tryIncreaseQty(
+                  context: context,
+                  cart: context.read<CartProvider>(),
+                  product: product,
+                  stockMap: {product.id: stockQty},
+                );
+                if (added) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text('${product.name} ditambahkan'),
+                      duration: const Duration(milliseconds: 700),
+                      behavior: SnackBarBehavior.floating,
+                    ),
+                  );
+                }
+              },
+            ),
+        ],
+      ),
+    );
   }
 
   /// Kelompokkan SEMUA produk (bukan hanya aktif)
@@ -243,7 +512,20 @@ class _KasirPageState extends State<KasirPage>
     if (user == null) return;
     final transactionProvider = context.read<TransactionProvider>();
     final stockProvider = context.read<StockProvider>();
+    final shiftProvider = context.read<CashierShiftProvider>();
     final messenger = ScaffoldMessenger.of(context);
+    final activeShift = shiftProvider.activeShift;
+
+    if (activeShift == null) {
+      messenger.showSnackBar(
+        SnackBar(
+          content: const Text('Mulai shift dulu sebelum transaksi.'),
+          backgroundColor: ClayColors.warning,
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+      return;
+    }
 
     final confirmed = await showDialog<bool>(
       context: context,
@@ -297,14 +579,17 @@ class _KasirPageState extends State<KasirPage>
             },
           )
           .toList();
+      final receiptItems = List<dynamic>.from(cart.itemsList);
       final total = cart.totalPrice;
 
-      await transactionProvider.createTransaction(
+      final transactionId = await transactionProvider.createTransaction(
         cashierId: user.id,
+        shiftId: activeShift.id,
         total: total,
         items: items,
       );
       await stockProvider.loadMovements();
+      await shiftProvider.load(user.id);
 
       cart.clear();
       await LocalNotificationService.showTransactionSuccess(total);
@@ -326,6 +611,11 @@ class _KasirPageState extends State<KasirPage>
           ),
         ),
       );
+      await _showReceiptActions(
+        transactionId: transactionId,
+        items: receiptItems,
+        total: total,
+      );
     } catch (e) {
       if (!mounted) return;
       messenger.showSnackBar(
@@ -338,12 +628,183 @@ class _KasirPageState extends State<KasirPage>
     }
   }
 
+  String _buildReceiptText({
+    required String transactionId,
+    required List<dynamic> items,
+    required double total,
+  }) {
+    final buffer = StringBuffer()
+      ..writeln('BANGJUN SPOT')
+      ..writeln('Struk Transaksi')
+      ..writeln(DateFormat('dd/MM/yyyy HH:mm').format(DateTime.now()))
+      ..writeln('No: ${transactionId.substring(0, 8)}')
+      ..writeln('-------------------------');
+
+    for (final item in items) {
+      final product = item.product;
+      final qty = item.quantity;
+      final lineTotal = item.total;
+      buffer.writeln('${product.name} x$qty');
+      buffer.writeln(formatRupiah(lineTotal));
+    }
+
+    buffer
+      ..writeln('-------------------------')
+      ..writeln('Total: ${formatRupiah(total)}')
+      ..writeln('Terima kasih.');
+    return buffer.toString();
+  }
+
+  Future<File> _saveReceiptPdf({
+    required String transactionId,
+    required List<dynamic> items,
+    required double total,
+  }) async {
+    final doc = pw.Document();
+    final now = DateTime.now();
+
+    doc.addPage(
+      pw.Page(
+        build: (context) => pw.Column(
+          crossAxisAlignment: pw.CrossAxisAlignment.start,
+          children: [
+            pw.Text(
+              'BANGJUN SPOT',
+              style: pw.TextStyle(fontSize: 18, fontWeight: pw.FontWeight.bold),
+            ),
+            pw.Text('Struk Transaksi'),
+            pw.Text(DateFormat('dd/MM/yyyy HH:mm').format(now)),
+            pw.Text('No: ${transactionId.substring(0, 8)}'),
+            pw.SizedBox(height: 14),
+            pw.Divider(),
+            ...items.map((item) {
+              final product = item.product;
+              return pw.Padding(
+                padding: const pw.EdgeInsets.only(bottom: 8),
+                child: pw.Row(
+                  mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+                  children: [
+                    pw.Expanded(
+                      child: pw.Text('${product.name} x${item.quantity}'),
+                    ),
+                    pw.Text(formatRupiah(item.total)),
+                  ],
+                ),
+              );
+            }),
+            pw.Divider(),
+            pw.Row(
+              mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+              children: [
+                pw.Text(
+                  'Total',
+                  style: pw.TextStyle(fontWeight: pw.FontWeight.bold),
+                ),
+                pw.Text(
+                  formatRupiah(total),
+                  style: pw.TextStyle(fontWeight: pw.FontWeight.bold),
+                ),
+              ],
+            ),
+            pw.SizedBox(height: 18),
+            pw.Text('Terima kasih.'),
+          ],
+        ),
+      ),
+    );
+
+    final dir = await getApplicationDocumentsDirectory();
+    final safeId = transactionId.substring(0, 8);
+    final file = File('${dir.path}/struk-bangjun-$safeId.pdf');
+    await file.writeAsBytes(await doc.save());
+    return file;
+  }
+
+  Future<void> _shareReceiptToWhatsapp(String text) async {
+    final uri = Uri.parse('https://wa.me/?text=${Uri.encodeComponent(text)}');
+    final launched = await launchUrl(uri, mode: LaunchMode.externalApplication);
+    if (!launched && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Tidak bisa membuka WhatsApp.'),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    }
+  }
+
+  Future<void> _showReceiptActions({
+    required String transactionId,
+    required List<dynamic> items,
+    required double total,
+  }) async {
+    final receiptText = _buildReceiptText(
+      transactionId: transactionId,
+      items: items,
+      total: total,
+    );
+
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: const Text('Struk Transaksi'),
+        content: const Text('Transaksi berhasil. Pilih aksi untuk struk.'),
+        actions: [
+          TextButton.icon(
+            onPressed: () {
+              Navigator.pop(ctx);
+              _shareReceiptToWhatsapp(receiptText);
+            },
+            icon: const Icon(Icons.chat_rounded),
+            label: const Text('Share WhatsApp'),
+          ),
+          TextButton.icon(
+            onPressed: () async {
+              Navigator.pop(ctx);
+              final file = await _saveReceiptPdf(
+                transactionId: transactionId,
+                items: items,
+                total: total,
+              );
+              if (!mounted) return;
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text('PDF tersimpan: ${file.path}'),
+                  behavior: SnackBarBehavior.floating,
+                ),
+              );
+            },
+            icon: const Icon(Icons.picture_as_pdf_rounded),
+            label: const Text('Simpan PDF'),
+          ),
+          TextButton.icon(
+            onPressed: () {
+              Navigator.pop(ctx);
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  content: Text(
+                    'Print bluetooth bisa ditambahkan di tahap berikutnya.',
+                  ),
+                  behavior: SnackBarBehavior.floating,
+                ),
+              );
+            },
+            icon: const Icon(Icons.print_rounded),
+            label: const Text('Print'),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final cart = context.watch<CartProvider>();
     final productProvider = context.watch<ProductProvider>();
     final stockProvider = context.watch<StockProvider>();
     final txProvider = context.watch<TransactionProvider>();
+    final shiftProvider = context.watch<CashierShiftProvider>();
 
     if (productProvider.isLoading || stockProvider.isLoading) {
       return const Center(child: CircularProgressIndicator());
@@ -456,7 +917,8 @@ class _KasirPageState extends State<KasirPage>
                     ? Align(
                         alignment: Alignment.centerLeft,
                         child: OutlinedButton.icon(
-                          onPressed: () => setState(() => _showQuickPanel = true),
+                          onPressed: () =>
+                              setState(() => _showQuickPanel = true),
                           icon: const Icon(Icons.search_rounded, size: 16),
                           label: const Text('Buka Cari Menu Cepat'),
                         ),
@@ -472,14 +934,19 @@ class _KasirPageState extends State<KasirPage>
                                     onChanged: (v) =>
                                         setState(() => _searchQuery = v),
                                     decoration: InputDecoration(
-                                      prefixIcon: const Icon(Icons.search_rounded),
+                                      prefixIcon: const Icon(
+                                        Icons.search_rounded,
+                                      ),
                                       hintText: 'Cari menu cepat...',
                                       suffixIcon: _searchQuery.isEmpty
                                           ? null
                                           : IconButton(
-                                              onPressed: () =>
-                                                  setState(() => _searchQuery = ''),
-                                              icon: const Icon(Icons.close_rounded),
+                                              onPressed: () => setState(
+                                                () => _searchQuery = '',
+                                              ),
+                                              icon: const Icon(
+                                                Icons.close_rounded,
+                                              ),
                                             ),
                                     ),
                                   ),
@@ -487,7 +954,9 @@ class _KasirPageState extends State<KasirPage>
                                 IconButton(
                                   tooltip: 'Tutup panel cepat & hapus riwayat',
                                   onPressed: _clearQuickSearchState,
-                                  icon: const Icon(Icons.close_fullscreen_rounded),
+                                  icon: const Icon(
+                                    Icons.close_fullscreen_rounded,
+                                  ),
                                 ),
                               ],
                             ),
@@ -505,23 +974,28 @@ class _KasirPageState extends State<KasirPage>
                               Wrap(
                                 spacing: 6,
                                 runSpacing: 6,
-                                children:
-                                    quickSearchResults.asMap().entries.map((entry) {
-                                  final index = entry.key;
-                                  final p = entry.value;
-                                  final hotkey = index < 9 ? ' [${index + 1}]' : '';
-                                  return ActionChip(
-                                    label: Text('${p.name}$hotkey'),
-                                    onPressed: () {
-                                      _tryIncreaseQty(
-                                        context: context,
-                                        cart: cart,
-                                        product: p,
-                                        stockMap: stockMap,
+                                children: quickSearchResults
+                                    .asMap()
+                                    .entries
+                                    .map((entry) {
+                                      final index = entry.key;
+                                      final p = entry.value;
+                                      final hotkey = index < 9
+                                          ? ' [${index + 1}]'
+                                          : '';
+                                      return ActionChip(
+                                        label: Text('${p.name}$hotkey'),
+                                        onPressed: () {
+                                          _tryIncreaseQty(
+                                            context: context,
+                                            cart: cart,
+                                            product: p,
+                                            stockMap: stockMap,
+                                          );
+                                        },
                                       );
-                                    },
-                                  );
-                                }).toList(),
+                                    })
+                                    .toList(),
                               ),
                               const SizedBox(height: 8),
                             ],
@@ -538,8 +1012,9 @@ class _KasirPageState extends State<KasirPage>
                                   ),
                                   const Spacer(),
                                   TextButton(
-                                    onPressed: () =>
-                                        setState(() => _recentProductIds.clear()),
+                                    onPressed: () => setState(
+                                      () => _recentProductIds.clear(),
+                                    ),
                                     child: const Text('Hapus Riwayat'),
                                   ),
                                 ],
@@ -569,18 +1044,27 @@ class _KasirPageState extends State<KasirPage>
                               label: _isRepeatingLastOrder
                                   ? 'Memuat order terakhir...'
                                   : 'Ulang Order Terakhir',
-                              onPressed: _isRepeatingLastOrder || txProvider.isLoading
+                              onPressed:
+                                  _isRepeatingLastOrder || txProvider.isLoading
                                   ? null
                                   : () => _repeatLastOrder(
-                                        cart: cart,
-                                        products: products,
-                                        stockMap: stockMap,
-                                      ),
+                                      cart: cart,
+                                      products: products,
+                                      stockMap: stockMap,
+                                    ),
                               fullWidth: true,
                             ),
                           ],
                         ),
                       ),
+              ),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 6, 16, 6),
+                child: _ShiftSummaryCard(
+                  provider: shiftProvider,
+                  onOpenShift: _openShiftDialog,
+                  onCloseShift: _closeShiftDialog,
+                ),
               ),
               Expanded(
                 child: ListView(
@@ -736,6 +1220,35 @@ class _KasirPageState extends State<KasirPage>
                                   ),
                                 ),
                               ),
+                            const SizedBox(height: 6),
+                            Align(
+                              alignment: Alignment.centerLeft,
+                              child: TextButton.icon(
+                                onPressed: () => _showProductDetail(
+                                  context,
+                                  product: product,
+                                  stockQty: stockQty,
+                                  canOrder: canOrder,
+                                  qtyInCart: qtyInCart,
+                                ),
+                                icon: const Icon(
+                                  Icons.visibility_rounded,
+                                  size: 15,
+                                ),
+                                label: const Text('Lihat Detail'),
+                                style: TextButton.styleFrom(
+                                  foregroundColor: ClayColors.primary,
+                                  padding: EdgeInsets.zero,
+                                  minimumSize: const Size(0, 28),
+                                  tapTargetSize:
+                                      MaterialTapTargetSize.shrinkWrap,
+                                  textStyle: const TextStyle(
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                                ),
+                              ),
+                            ),
                           ],
                         ),
                       ),
@@ -1095,6 +1608,153 @@ class _QuickAddIntent extends Intent {
   const _QuickAddIntent(this.index);
 }
 
+class _ShiftSummaryCard extends StatelessWidget {
+  final CashierShiftProvider provider;
+  final VoidCallback onOpenShift;
+  final VoidCallback onCloseShift;
+
+  const _ShiftSummaryCard({
+    required this.provider,
+    required this.onOpenShift,
+    required this.onCloseShift,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final shift = provider.activeShift;
+    final isOpen = shift != null;
+    final openedAt = shift == null
+        ? '-'
+        : DateFormat('dd/MM HH:mm').format(shift.openedAt);
+
+    return ClayCard(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      elevation: ClayElevation.surface,
+      child: Row(
+        children: [
+          Container(
+            width: 38,
+            height: 38,
+            decoration: BoxDecoration(
+              color: (isOpen ? ClayColors.success : ClayColors.warning)
+                  .withAlpha(25),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Icon(
+              isOpen ? Icons.point_of_sale_rounded : Icons.lock_clock_rounded,
+              color: isOpen ? ClayColors.success : ClayColors.warning,
+            ),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  isOpen ? 'Shift aktif sejak $openedAt' : 'Belum mulai shift',
+                  style: const TextStyle(
+                    fontWeight: FontWeight.w800,
+                    fontSize: 13,
+                  ),
+                ),
+                const SizedBox(height: 3),
+                Text(
+                  isOpen
+                      ? '${provider.shiftTransactionCount} transaksi - Total ${formatRupiah(provider.shiftSalesTotal)} - Laci ${formatRupiah(provider.expectedCash)}'
+                      : 'Mulai shift sebelum transaksi agar laporan kas rapi.',
+                  style: TextStyle(fontSize: 11, color: ClayColors.textMuted),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 8),
+          OutlinedButton(
+            onPressed: provider.isLoading
+                ? null
+                : isOpen
+                ? onCloseShift
+                : onOpenShift,
+            child: Text(isOpen ? 'Tutup' : 'Mulai'),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _DetailRow extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final String value;
+
+  const _DetailRow({
+    required this.icon,
+    required this.label,
+    required this.value,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Row(
+        children: [
+          Icon(icon, size: 17, color: ClayColors.textMuted),
+          const SizedBox(width: 8),
+          Text(
+            '$label:',
+            style: TextStyle(
+              fontSize: 12,
+              color: ClayColors.textMuted,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          const SizedBox(width: 6),
+          Expanded(
+            child: Text(
+              value,
+              textAlign: TextAlign.right,
+              style: TextStyle(
+                fontSize: 12,
+                color: ClayColors.textPrimary,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _DetailImageFallback extends StatelessWidget {
+  const _DetailImageFallback();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      height: 210,
+      width: double.infinity,
+      color: ClayColors.surfaceAlt,
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(
+            Icons.restaurant_menu_rounded,
+            color: ClayColors.textMuted,
+            size: 42,
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'Foto menu belum tersedia',
+            style: TextStyle(fontSize: 12, color: ClayColors.textMuted),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class _SmallIconBtn extends StatelessWidget {
   final IconData icon;
   final VoidCallback onTap;
@@ -1121,4 +1781,3 @@ class _SmallIconBtn extends StatelessWidget {
     );
   }
 }
-

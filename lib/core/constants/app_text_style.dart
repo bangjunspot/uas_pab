@@ -8,10 +8,7 @@ class AppTextStyle {
     color: AppColors.textPrimary,
   );
 
-  static const body = TextStyle(
-    fontSize: 14,
-    color: AppColors.textPrimary,
-  );
+  static const body = TextStyle(fontSize: 14, color: AppColors.textPrimary);
 
   static const caption = TextStyle(
     fontSize: 12,

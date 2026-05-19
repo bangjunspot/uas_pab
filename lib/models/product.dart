@@ -4,6 +4,7 @@ class Product {
   final String? category;
   final double price;
   final String? imageUrl;
+  final int minStock;
   final bool isActive;
   final DateTime? createdAt;
 
@@ -13,6 +14,7 @@ class Product {
     required this.category,
     required this.price,
     required this.imageUrl,
+    required this.minStock,
     required this.isActive,
     required this.createdAt,
   });
@@ -24,6 +26,7 @@ class Product {
       category: map['category']?.toString(),
       price: (map['price'] as num?)?.toDouble() ?? 0,
       imageUrl: map['image_url']?.toString(),
+      minStock: (map['min_stock'] as num?)?.toInt() ?? 3,
       isActive: (map['is_active'] as bool?) ?? true,
       createdAt: map['created_at'] != null
           ? DateTime.tryParse(map['created_at'].toString())
@@ -37,6 +40,7 @@ class Product {
       'category': category,
       'price': price,
       'image_url': imageUrl,
+      'min_stock': minStock,
       'is_active': isActive,
     };
   }
@@ -47,6 +51,7 @@ class Product {
       'category': category,
       'price': price,
       'image_url': imageUrl,
+      'min_stock': minStock,
       'is_active': isActive,
     };
   }

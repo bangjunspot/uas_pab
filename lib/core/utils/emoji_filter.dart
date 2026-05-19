@@ -6,6 +6,7 @@ class EmojiFilter {
     unicode: true,
   );
 
-  static final TextInputFormatter denyEmoji =
-      FilteringTextInputFormatter.deny(_emojiRegex);
+  static final TextInputFormatter denyEmoji = FilteringTextInputFormatter.deny(
+    _emojiRegex,
+  );
 }

@@ -34,11 +34,25 @@ create table if not exists products (
   category text,
   price numeric,
   image_url text,
+  min_stock integer default 3,
   is_active boolean default true,
   created_at timestamptz default now()
 );
 
 alter table products add column if not exists category text;
+alter table products add column if not exists min_stock integer default 3;
+
+create table if not exists cashier_shifts (
+  id uuid primary key default gen_random_uuid(),
+  cashier_id uuid references profiles(id) on delete cascade,
+  opened_at timestamptz default now(),
+  closed_at timestamptz,
+  opening_cash numeric default 0,
+  closing_cash numeric,
+  expected_cash numeric default 0,
+  cash_difference numeric,
+  note text
+);
 
 create table if not exists stock_movements (
   id uuid primary key default gen_random_uuid(),
@@ -52,9 +66,12 @@ create table if not exists stock_movements (
 create table if not exists transactions (
   id uuid primary key default gen_random_uuid(),
   cashier_id uuid references profiles(id),
+  shift_id uuid references cashier_shifts(id),
   total numeric,
   created_at timestamptz default now()
 );
+
+alter table transactions add column if not exists shift_id uuid references cashier_shifts(id);
 
 create table if not exists transaction_items (
   id uuid primary key default gen_random_uuid(),
@@ -64,11 +81,25 @@ create table if not exists transaction_items (
   price numeric
 );
 
+create table if not exists attendance_records (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid references profiles(id) on delete cascade,
+  type text not null check (type in ('masuk', 'pulang')),
+  lat double precision not null,
+  lng double precision not null,
+  photo_url text,
+  biometric_verified boolean default false,
+  distance_km double precision,
+  created_at timestamptz default now()
+);
+
 alter table if exists profiles enable row level security;
 alter table if exists products enable row level security;
+alter table if exists cashier_shifts enable row level security;
 alter table if exists stock_movements enable row level security;
 alter table if exists transactions enable row level security;
 alter table if exists transaction_items enable row level security;
+alter table if exists attendance_records enable row level security;
 
 create or replace function is_admin()
 returns boolean
@@ -96,11 +127,18 @@ drop policy if exists "stock admin" on stock_movements;
 drop policy if exists "stock read authenticated" on stock_movements;
 drop policy if exists "stock out insert authenticated" on stock_movements;
 
+drop policy if exists "shifts insert own" on cashier_shifts;
+drop policy if exists "shifts read own or admin" on cashier_shifts;
+drop policy if exists "shifts update own open or admin" on cashier_shifts;
+
 drop policy if exists "transactions insert" on transactions;
 drop policy if exists "transactions read" on transactions;
 
 drop policy if exists "transaction_items insert" on transaction_items;
 drop policy if exists "transaction_items read" on transaction_items;
+
+drop policy if exists "attendance insert own" on attendance_records;
+drop policy if exists "attendance read own or admin" on attendance_records;
 
 create policy "profiles read"
   on profiles
@@ -129,6 +167,22 @@ create policy "products admin"
   using (is_admin())
   with check (is_admin());
 
+create policy "shifts insert own"
+  on cashier_shifts
+  for insert
+  with check (auth.uid() = cashier_id);
+
+create policy "shifts read own or admin"
+  on cashier_shifts
+  for select
+  using (auth.uid() = cashier_id or is_admin());
+
+create policy "shifts update own open or admin"
+  on cashier_shifts
+  for update
+  using (auth.uid() = cashier_id or is_admin())
+  with check (auth.uid() = cashier_id or is_admin());
+
 create policy "stock admin"
   on stock_movements
   for all
@@ -153,7 +207,18 @@ create policy "stock out insert authenticated"
 create policy "transactions insert"
   on transactions
   for insert
-  with check (auth.uid() = cashier_id);
+  with check (
+    auth.uid() = cashier_id
+    and (
+      shift_id is null
+      or exists (
+        select 1 from cashier_shifts s
+        where s.id = shift_id
+          and s.cashier_id = auth.uid()
+          and s.closed_at is null
+      )
+    )
+  );
 
 create policy "transactions read"
   on transactions
@@ -175,6 +240,39 @@ create policy "transaction_items read"
       where t.id = transaction_id
         and t.cashier_id = auth.uid()
     )
+  );
+
+create policy "attendance insert own"
+  on attendance_records
+  for insert
+  with check (
+    auth.uid() = user_id
+    and biometric_verified = true
+  );
+
+create policy "attendance read own or admin"
+  on attendance_records
+  for select
+  using (auth.uid() = user_id or is_admin());
+
+insert into storage.buckets (id, name, public)
+values ('attendance-photos', 'attendance-photos', true)
+on conflict (id) do update set public = excluded.public;
+
+drop policy if exists "attendance photos read" on storage.objects;
+drop policy if exists "attendance photos upload own folder" on storage.objects;
+
+create policy "attendance photos read"
+  on storage.objects
+  for select
+  using (bucket_id = 'attendance-photos');
+
+create policy "attendance photos upload own folder"
+  on storage.objects
+  for insert
+  with check (
+    bucket_id = 'attendance-photos'
+    and auth.uid()::text = (storage.foldername(name))[1]
   );
 
 -- ============================================================

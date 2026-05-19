@@ -47,5 +47,13 @@
 		<true/>
 		<key>UIStatusBarHidden</key>
 		<false/>
+		<key>NSCameraUsageDescription</key>
+		<string>Kamera digunakan untuk foto bukti absensi dan foto produk.</string>
+		<key>NSPhotoLibraryUsageDescription</key>
+		<string>Galeri digunakan untuk memilih foto produk.</string>
+		<key>NSLocationWhenInUseUsageDescription</key>
+		<string>Lokasi digunakan untuk validasi geolokasi absensi dan lokasi kedai.</string>
+		<key>NSFaceIDUsageDescription</key>
+		<string>Biometrik digunakan untuk verifikasi sidik jari atau Face ID saat login dan absensi.</string>
 	</dict>
 </plist>

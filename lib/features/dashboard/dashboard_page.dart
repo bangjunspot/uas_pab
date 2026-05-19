@@ -1,11 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
-import 'package:geolocator/geolocator.dart';
 import 'package:provider/provider.dart';
 import 'package:fl_chart/fl_chart.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:webview_flutter/webview_flutter.dart';
-import '../../core/services/location_service.dart';
 import '../../core/utils/currency_formatter.dart';
 import '../../core/utils/date_formatter.dart';
 import '../../providers/auth_provider.dart';
@@ -25,12 +23,11 @@ class DashboardPage extends StatefulWidget {
 }
 
 class _DashboardPageState extends State<DashboardPage> {
-  final LocationService _locationService = LocationService();
+  static final Uri _bangjunMapsUri = Uri.parse(
+    'https://www.google.com/maps/search/?api=1&query=BangJun%20Spot%20Samarinda',
+  );
+
   WebViewController? _controller;
-  bool _isDetectingLocation = false;
-  double? _lastAccuracyMeter;
-  DateTime? _lastDetectedAt;
-  Position? _lastDetectedPosition;
 
   static const String _mapHtml = '''
   <!DOCTYPE html>
@@ -85,77 +82,9 @@ class _DashboardPageState extends State<DashboardPage> {
     );
   }
 
-  /// Deteksi dan simpan lokasi kedai dari dashboard.
-  Future<void> _detectStoreLocation() async {
-    final auth = context.read<AuthProvider>();
-    final profile = auth.profile;
-    if (profile == null) {
-      _showSnackBar('Profil tidak ditemukan. Coba login ulang.', success: false);
-      return;
-    }
-
-    if (_isDetectingLocation) return;
-    setState(() => _isDetectingLocation = true);
-
-    try {
-      final permission = await Geolocator.checkPermission();
-      if (permission == LocationPermission.deniedForever) {
-        await _locationService.openAppSettingsPage();
-        _showSnackBar(
-          'Izin lokasi ditolak permanen. Aktifkan lagi dari pengaturan aplikasi.',
-          success: false,
-        );
-        return;
-      }
-
-      final position = await _locationService.getCurrentPosition();
-      if (position == null) {
-        _showSnackBar(
-          'Lokasi belum bisa dideteksi. Pastikan GPS aktif dan izin lokasi diberikan.',
-          success: false,
-        );
-        return;
-      }
-
-      await _locationService.saveStoreLocation(
-        userId: profile.id,
-        lat: position.latitude,
-        lng: position.longitude,
-      );
-      await auth.loadProfile();
-
-      if (!mounted) return;
-      setState(() {
-        _lastAccuracyMeter = position.accuracy;
-        _lastDetectedAt = DateTime.now();
-        _lastDetectedPosition = position;
-      });
-      _showSnackBar('Lokasi kedai berhasil diperbarui.');
-    } catch (e) {
-      _showSnackBar('Gagal menyimpan lokasi: $e', success: false);
-    } finally {
-      if (mounted) {
-        setState(() => _isDetectingLocation = false);
-      }
-    }
-  }
-
   Future<void> _openGoogleMapsRoute() async {
-    final profile = context.read<AuthProvider>().profile;
-    final storeLat = profile?.storeLat;
-    final storeLng = profile?.storeLng;
-
-    if (storeLat == null || storeLng == null) {
-      _showSnackBar('Lokasi kedai belum tersedia.', success: false);
-      return;
-    }
-
-    final uri = Uri.parse(
-      'https://www.google.com/maps/dir/?api=1&destination=$storeLat,$storeLng&travelmode=driving',
-    );
-
     final launched = await launchUrl(
-      uri,
+      _bangjunMapsUri,
       mode: LaunchMode.externalApplication,
     );
 
@@ -165,22 +94,29 @@ class _DashboardPageState extends State<DashboardPage> {
   }
 
   double _calcTotalByDay(List<dynamic> transactions, DateTime day) {
-    return transactions.where((t) {
-      final d = t.createdAt;
-      if (d == null) return false;
-      return d.year == day.year && d.month == day.month && d.day == day.day;
-    }).fold<double>(0, (sum, t) => sum + ((t.total as num).toDouble()));
+    return transactions
+        .where((t) {
+          final d = t.createdAt;
+          if (d == null) return false;
+          return d.year == day.year && d.month == day.month && d.day == day.day;
+        })
+        .fold<double>(0, (sum, t) => sum + ((t.total as num).toDouble()));
   }
 
   double _calcRecentDaysTotal(List<dynamic> transactions, int days) {
     final now = DateTime.now();
-    final start = DateTime(now.year, now.month, now.day)
-        .subtract(Duration(days: days - 1));
-    return transactions.where((t) {
-      final d = t.createdAt;
-      if (d == null) return false;
-      return !d.isBefore(start);
-    }).fold<double>(0, (sum, t) => sum + ((t.total as num).toDouble()));
+    final start = DateTime(
+      now.year,
+      now.month,
+      now.day,
+    ).subtract(Duration(days: days - 1));
+    return transactions
+        .where((t) {
+          final d = t.createdAt;
+          if (d == null) return false;
+          return !d.isBefore(start);
+        })
+        .fold<double>(0, (sum, t) => sum + ((t.total as num).toDouble()));
   }
 
   double _calcPreviousDaysTotal(List<dynamic> transactions, int days) {
@@ -188,21 +124,20 @@ class _DashboardPageState extends State<DashboardPage> {
     final endCurrent = DateTime(now.year, now.month, now.day);
     final endPrevious = endCurrent.subtract(Duration(days: days));
     final startPrevious = endPrevious.subtract(Duration(days: days));
-    return transactions.where((t) {
-      final d = t.createdAt;
-      if (d == null) return false;
-      return !d.isBefore(startPrevious) && d.isBefore(endPrevious);
-    }).fold<double>(0, (sum, t) => sum + ((t.total as num).toDouble()));
+    return transactions
+        .where((t) {
+          final d = t.createdAt;
+          if (d == null) return false;
+          return !d.isBefore(startPrevious) && d.isBefore(endPrevious);
+        })
+        .fold<double>(0, (sum, t) => sum + ((t.total as num).toDouble()));
   }
 
   @override
   Widget build(BuildContext context) {
     final tx = context.watch<TransactionProvider>();
-    final auth = context.watch<AuthProvider>();
     final productProvider = context.watch<ProductProvider>();
     final stockProvider = context.watch<StockProvider>();
-    final profile = auth.profile;
-    final hasSavedLocation = profile?.storeLat != null && profile?.storeLng != null;
 
     if (tx.isLoading) {
       return const Center(child: CircularProgressIndicator());
@@ -233,21 +168,27 @@ class _DashboardPageState extends State<DashboardPage> {
     final has7DaysData = last7Days.any((e) => e.value > 0);
     final products = productProvider.products;
     final stockMap = stockProvider.stockMap;
-    final criticalProducts = products.where((p) {
-      final stock = stockMap[p.id] ?? 0;
-      return p.isActive && stock > 0 && stock <= 3;
-    }).toList()
-      ..sort((a, b) => (stockMap[a.id] ?? 0).compareTo(stockMap[b.id] ?? 0));
+    final criticalProducts =
+        products.where((p) {
+          final stock = stockMap[p.id] ?? 0;
+          return p.isActive && stock > 0 && stock <= p.minStock;
+        }).toList()..sort(
+          (a, b) => (stockMap[a.id] ?? 0).compareTo(stockMap[b.id] ?? 0),
+        );
     final nonActiveWithStock = products.where((p) {
       final stock = stockMap[p.id] ?? 0;
       return !p.isActive && stock > 0;
     }).toList();
     final recentTransactions = transactions.take(3).toList();
     final topMenus = _computeTopMenus(transactions, limit: 3);
-    final yesterdayTotal = _calcTotalByDay(transactions, DateTime.now().subtract(const Duration(days: 1)));
+    final yesterdayTotal = _calcTotalByDay(
+      transactions,
+      DateTime.now().subtract(const Duration(days: 1)),
+    );
     final this7 = _calcRecentDaysTotal(transactions, 7);
     final prev7 = _calcPreviousDaysTotal(transactions, 7);
-    final omzetDownVsYesterday = yesterdayTotal > 0 && todayTotal < yesterdayTotal;
+    final omzetDownVsYesterday =
+        yesterdayTotal > 0 && todayTotal < yesterdayTotal;
     final omzetDownVsLastWeek = prev7 > 0 && this7 < prev7;
 
     return RefreshIndicator(
@@ -337,10 +278,7 @@ class _DashboardPageState extends State<DashboardPage> {
                                 menuName,
                               );
                               final total7Days = _countMenuQty(
-                                _filterRecentDaysTransactions(
-                                  transactions,
-                                  7,
-                                ),
+                                _filterRecentDaysTransactions(transactions, 7),
                                 menuName,
                               );
                               showDialog<void>(
@@ -437,16 +375,20 @@ class _DashboardPageState extends State<DashboardPage> {
                       icon: Icons.inventory_2_rounded,
                       color: Colors.orange.shade700,
                       title: 'Stok hampir habis',
-                      message:
-                          '${criticalProducts.take(3).map((p) => '${p.name} (${stockMap[p.id] ?? 0})').join(', ')}',
+                      message: criticalProducts
+                          .take(3)
+                          .map((p) => '${p.name} (${stockMap[p.id] ?? 0})')
+                          .join(', '),
                     ),
                   if (nonActiveWithStock.isNotEmpty)
                     _AlertTile(
                       icon: Icons.visibility_off_rounded,
                       color: Colors.blueGrey,
                       title: 'Menu nonaktif masih tersedia',
-                      message:
-                          '${nonActiveWithStock.take(3).map((p) => '${p.name} (${stockMap[p.id] ?? 0})').join(', ')}',
+                      message: nonActiveWithStock
+                          .take(3)
+                          .map((p) => '${p.name} (${stockMap[p.id] ?? 0})')
+                          .join(', '),
                     ),
                   if (omzetDownVsYesterday)
                     _AlertTile(
@@ -604,10 +546,7 @@ class _DashboardPageState extends State<DashboardPage> {
                   const SizedBox(height: 4),
                   Text(
                     'Total: ${formatRupiah(tx.filteredMonthTotal)}',
-                    style: TextStyle(
-                      fontSize: 12,
-                      color: ClayColors.textMuted,
-                    ),
+                    style: TextStyle(fontSize: 12, color: ClayColors.textMuted),
                   ),
                   const SizedBox(height: 12),
                   SizedBox(
@@ -649,12 +588,14 @@ class _DashboardPageState extends State<DashboardPage> {
                       ),
                     )
                   else
-                    ...transactions.take(10).toList().asMap().entries.map((entry) {
+                    ...transactions.take(10).toList().asMap().entries.map((
+                      entry,
+                    ) {
                       final t = entry.value;
                       final date = t.createdAt != null
                           ? '${t.createdAt!.day}/${t.createdAt!.month} '
-                              '${t.createdAt!.hour.toString().padLeft(2, '0')}:'
-                              '${t.createdAt!.minute.toString().padLeft(2, '0')}'
+                                '${t.createdAt!.hour.toString().padLeft(2, '0')}:'
+                                '${t.createdAt!.minute.toString().padLeft(2, '0')}'
                           : '-';
                       return ClayFadeSlide(
                         index: entry.key,
@@ -700,7 +641,7 @@ class _DashboardPageState extends State<DashboardPage> {
           ),
           const SizedBox(height: 16),
 
-          // -- Lokasi Toko Kami --
+          // -- Detail BangJun --
           ClayFadeSlide(
             index: 8,
             child: ClayCard(
@@ -717,7 +658,7 @@ class _DashboardPageState extends State<DashboardPage> {
                       SizedBox(width: 6),
                       Flexible(
                         child: Text(
-                          'Lokasi Toko Kami',
+                          'Detail BangJun',
                           style: TextStyle(fontWeight: FontWeight.bold),
                           overflow: TextOverflow.ellipsis,
                         ),
@@ -726,95 +667,36 @@ class _DashboardPageState extends State<DashboardPage> {
                   ),
                   const SizedBox(height: 4),
                   Text(
-                    'Kedai Bang Jun - Samarinda',
+                    'BangJun Spot - UMKM kuliner Samarinda',
+                    style: TextStyle(fontSize: 12, color: ClayColors.textMuted),
+                  ),
+                  const SizedBox(height: 12),
+                  Text(
+                    'BangJun Spot adalah usaha kuliner lokal dengan menu utama '
+                    'aneka ayam, nasi goreng, indomie, dan minuman. Dashboard '
+                    'ini dipakai untuk memantau penjualan, stok, produk, kasir, '
+                    'dan absensi operasional toko.',
                     style: TextStyle(
                       fontSize: 12,
                       color: ClayColors.textMuted,
+                      height: 1.45,
                     ),
                   ),
-                  const SizedBox(height: 12),
-                  if (hasSavedLocation) ...[
-                    Text(
-                      'Koordinat tersimpan',
-                      style: TextStyle(
-                        fontWeight: FontWeight.w600,
-                        color: ClayColors.textPrimary,
-                      ),
+                  const SizedBox(height: 10),
+                  Text(
+                    'Peta di bawah ditetapkan ke pencarian Google Maps BangJun Spot Samarinda.',
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: ClayColors.textMuted,
+                      height: 1.4,
                     ),
-                    const SizedBox(height: 6),
-                    Text(
-                      'Latitude: ${profile!.storeLat!.toStringAsFixed(6)}\n'
-                      'Longitude: ${profile.storeLng!.toStringAsFixed(6)}',
-                      style: TextStyle(
-                        height: 1.4,
-                        fontSize: 12,
-                        color: ClayColors.textMuted,
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                  ] else
-                    Text(
-                      'Lokasi belum dikonfigurasi. Tekan tombol deteksi untuk menyimpan titik terbaru kedai.',
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: ClayColors.textMuted,
-                        height: 1.4,
-                      ),
-                    ),
-                  if (_lastDetectedAt != null) ...[
-                    const SizedBox(height: 8),
-                    Text(
-                      'Deteksi terakhir: ${_lastDetectedAt!.day.toString().padLeft(2, '0')}-'
-                      '${_lastDetectedAt!.month.toString().padLeft(2, '0')}-'
-                      '${_lastDetectedAt!.year} '
-                      '${_lastDetectedAt!.hour.toString().padLeft(2, '0')}:'
-                      '${_lastDetectedAt!.minute.toString().padLeft(2, '0')} '
-                      '(akurasi ±${(_lastAccuracyMeter ?? 0).toStringAsFixed(1)} m)',
-                      style: TextStyle(
-                        fontSize: 11,
-                        color: ClayColors.textMuted,
-                      ),
-                    ),
-                    if (_lastDetectedPosition != null) ...[
-                      const SizedBox(height: 4),
-                      Text(
-                        'Koordinat deteksi: '
-                        '${_lastDetectedPosition!.latitude.toStringAsFixed(6)}, '
-                        '${_lastDetectedPosition!.longitude.toStringAsFixed(6)}',
-                        style: TextStyle(
-                          fontSize: 11,
-                          color: ClayColors.textMuted,
-                        ),
-                      ),
-                    ],
-                  ],
-                  if (hasSavedLocation) ...[
-                    const SizedBox(height: 8),
-                    Text(
-                      'Jarak & estimasi menggunakan Google Maps (real-time traffic).',
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: ClayColors.textMuted,
-                        height: 1.4,
-                      ),
-                    ),
-                  ],
+                  ),
                   const SizedBox(height: 12),
                   ClayButton(
-                    label: _isDetectingLocation
-                        ? 'Mendeteksi lokasi...'
-                        : 'Deteksi Lokasi Sekarang',
-                    onPressed: _isDetectingLocation ? null : _detectStoreLocation,
+                    label: 'Tekan untuk Buka GMaps',
+                    onPressed: _openGoogleMapsRoute,
                     fullWidth: true,
                   ),
-                  if (hasSavedLocation) ...[
-                    const SizedBox(height: 8),
-                    ClayButton(
-                      label: 'Buka di Google Maps',
-                      onPressed: _openGoogleMapsRoute,
-                      fullWidth: true,
-                    ),
-                  ],
                   const SizedBox(height: 12),
                   SizedBox(
                     height: 220,
@@ -890,10 +772,16 @@ List<(String, int)> _computeTopMenus(
   return sorted.take(limit).map((e) => (e.key, e.value)).toList();
 }
 
-List<dynamic> _filterRecentDaysTransactions(List<dynamic> transactions, int days) {
+List<dynamic> _filterRecentDaysTransactions(
+  List<dynamic> transactions,
+  int days,
+) {
   final now = DateTime.now();
-  final start = DateTime(now.year, now.month, now.day)
-      .subtract(Duration(days: days - 1));
+  final start = DateTime(
+    now.year,
+    now.month,
+    now.day,
+  ).subtract(Duration(days: days - 1));
   return transactions.where((t) {
     final d = t.createdAt;
     if (d == null) return false;
@@ -942,26 +830,33 @@ dynamic _extractTransactionItems(dynamic tx) {
   if (rawItem == null) return null;
 
   if (rawItem is Map<String, dynamic>) {
-    final name = (rawItem['name'] ??
-            rawItem['product_name'] ??
-            rawItem['menu_name'] ??
-            rawItem['title'])
-        ?.toString()
-        .trim();
-    final qtyNum = rawItem['qty'] ??
+    final name =
+        (rawItem['name'] ??
+                rawItem['product_name'] ??
+                rawItem['menu_name'] ??
+                rawItem['title'])
+            ?.toString()
+            .trim();
+    final qtyNum =
+        rawItem['qty'] ??
         rawItem['quantity'] ??
         rawItem['count'] ??
         rawItem['jumlah'] ??
         1;
-    final qty = qtyNum is num ? qtyNum.toInt() : int.tryParse(qtyNum.toString()) ?? 1;
+    final qty = qtyNum is num
+        ? qtyNum.toInt()
+        : int.tryParse(qtyNum.toString()) ?? 1;
     if (name == null || name.isEmpty) return null;
     return (name, qty);
   }
 
   try {
     final dynamic name = rawItem.name;
-    final dynamic qtyRaw = rawItem.qty ?? rawItem.quantity ?? rawItem.count ?? 1;
-    final qty = qtyRaw is num ? qtyRaw.toInt() : int.tryParse(qtyRaw.toString()) ?? 1;
+    final dynamic qtyRaw =
+        rawItem.qty ?? rawItem.quantity ?? rawItem.count ?? 1;
+    final qty = qtyRaw is num
+        ? qtyRaw.toInt()
+        : int.tryParse(qtyRaw.toString()) ?? 1;
     if (name == null) return null;
     final text = name.toString().trim();
     if (text.isEmpty) return null;
@@ -1040,10 +935,8 @@ class _BarChart7Days extends StatelessWidget {
           show: true,
           drawVerticalLine: false,
           horizontalInterval: yInterval,
-          getDrawingHorizontalLine: (_) => FlLine(
-            color: Colors.black.withAlpha(15),
-            strokeWidth: 1,
-          ),
+          getDrawingHorizontalLine: (_) =>
+              FlLine(color: Colors.black.withAlpha(15), strokeWidth: 1),
         ),
         borderData: FlBorderData(show: false),
         titlesData: FlTitlesData(
@@ -1058,20 +951,19 @@ class _BarChart7Days extends StatelessWidget {
                   padding: const EdgeInsets.only(right: 4),
                   child: Text(
                     _abbrevRupiah(value),
-                    style: TextStyle(
-                      fontSize: 9,
-                      color: ClayColors.textMuted,
-                    ),
+                    style: TextStyle(fontSize: 9, color: ClayColors.textMuted),
                     textAlign: TextAlign.right,
                   ),
                 );
               },
             ),
           ),
-          topTitles:
-              const AxisTitles(sideTitles: SideTitles(showTitles: false)),
-          rightTitles:
-              const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+          topTitles: const AxisTitles(
+            sideTitles: SideTitles(showTitles: false),
+          ),
+          rightTitles: const AxisTitles(
+            sideTitles: SideTitles(showTitles: false),
+          ),
           bottomTitles: AxisTitles(
             sideTitles: SideTitles(
               showTitles: true,
@@ -1085,10 +977,7 @@ class _BarChart7Days extends StatelessWidget {
                   padding: const EdgeInsets.only(top: 6),
                   child: Text(
                     formatDateShort(data[index].key),
-                    style: TextStyle(
-                      fontSize: 9,
-                      color: ClayColors.textMuted,
-                    ),
+                    style: TextStyle(fontSize: 9, color: ClayColors.textMuted),
                   ),
                 );
               },
@@ -1136,10 +1025,7 @@ class _YearlyBarChart extends StatelessWidget {
   final List<double> totals;
   final int selectedMonth;
 
-  const _YearlyBarChart({
-    required this.totals,
-    required this.selectedMonth,
-  });
+  const _YearlyBarChart({required this.totals, required this.selectedMonth});
 
   String _abbrevRupiah(double v) {
     if (v >= 1000000) return '${(v / 1000000).toStringAsFixed(1)}jt';
@@ -1159,10 +1045,8 @@ class _YearlyBarChart extends StatelessWidget {
           show: true,
           drawVerticalLine: false,
           horizontalInterval: yInterval,
-          getDrawingHorizontalLine: (_) => FlLine(
-            color: Colors.black.withAlpha(15),
-            strokeWidth: 1,
-          ),
+          getDrawingHorizontalLine: (_) =>
+              FlLine(color: Colors.black.withAlpha(15), strokeWidth: 1),
         ),
         borderData: FlBorderData(show: false),
         titlesData: FlTitlesData(
@@ -1184,10 +1068,12 @@ class _YearlyBarChart extends StatelessWidget {
               },
             ),
           ),
-          topTitles:
-              const AxisTitles(sideTitles: SideTitles(showTitles: false)),
-          rightTitles:
-              const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+          topTitles: const AxisTitles(
+            sideTitles: SideTitles(showTitles: false),
+          ),
+          rightTitles: const AxisTitles(
+            sideTitles: SideTitles(showTitles: false),
+          ),
           bottomTitles: AxisTitles(
             sideTitles: SideTitles(
               showTitles: true,
@@ -1277,10 +1163,8 @@ class _LineChartMonth extends StatelessWidget {
           show: true,
           drawVerticalLine: false,
           horizontalInterval: yInterval,
-          getDrawingHorizontalLine: (_) => FlLine(
-            color: Colors.black.withAlpha(15),
-            strokeWidth: 1,
-          ),
+          getDrawingHorizontalLine: (_) =>
+              FlLine(color: Colors.black.withAlpha(15), strokeWidth: 1),
         ),
         borderData: FlBorderData(show: false),
         lineTouchData: LineTouchData(
@@ -1314,20 +1198,19 @@ class _LineChartMonth extends StatelessWidget {
                   padding: const EdgeInsets.only(right: 4),
                   child: Text(
                     _abbrevRupiah(value),
-                    style: TextStyle(
-                      fontSize: 9,
-                      color: ClayColors.textMuted,
-                    ),
+                    style: TextStyle(fontSize: 9, color: ClayColors.textMuted),
                     textAlign: TextAlign.right,
                   ),
                 );
               },
             ),
           ),
-          topTitles:
-              const AxisTitles(sideTitles: SideTitles(showTitles: false)),
-          rightTitles:
-              const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+          topTitles: const AxisTitles(
+            sideTitles: SideTitles(showTitles: false),
+          ),
+          rightTitles: const AxisTitles(
+            sideTitles: SideTitles(showTitles: false),
+          ),
           bottomTitles: AxisTitles(
             sideTitles: SideTitles(
               showTitles: true,
@@ -1342,10 +1225,7 @@ class _LineChartMonth extends StatelessWidget {
                   padding: const EdgeInsets.only(top: 6),
                   child: Text(
                     '${data[idx].key.day}',
-                    style: TextStyle(
-                      fontSize: 9,
-                      color: ClayColors.textMuted,
-                    ),
+                    style: TextStyle(fontSize: 9, color: ClayColors.textMuted),
                   ),
                 );
               },
@@ -1452,10 +1332,7 @@ class _StatCard extends StatelessWidget {
             child: Icon(icon, color: color, size: 18),
           ),
           const SizedBox(height: 8),
-          Text(
-            title,
-            style: const TextStyle(fontSize: 11, color: Colors.grey),
-          ),
+          Text(title, style: const TextStyle(fontSize: 11, color: Colors.grey)),
           const SizedBox(height: 2),
           Text(
             value,
@@ -1609,4 +1486,3 @@ class _AlertTile extends StatelessWidget {
     );
   }
 }
-

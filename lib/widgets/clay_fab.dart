@@ -6,11 +6,7 @@ class ClayFab extends StatelessWidget {
   final IconData icon;
   final VoidCallback onPressed;
 
-  const ClayFab({
-    super.key,
-    required this.icon,
-    required this.onPressed,
-  });
+  const ClayFab({super.key, required this.icon, required this.onPressed});
 
   @override
   Widget build(BuildContext context) {

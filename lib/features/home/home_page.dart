@@ -1,15 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import '../../core/services/location_service.dart';
 import '../../models/profile.dart';
 import '../../providers/auth_provider.dart';
 import '../../providers/cart_provider.dart';
-import '../../providers/product_provider.dart';
 import '../../providers/transaction_provider.dart';
 import '../auth/biometric_gate.dart';
+import '../attendance/attendance_page.dart';
 import '../dashboard/dashboard_page.dart';
 import '../kasir/kasir_page.dart';
-import '../kasir/widgets/barcode_scanner_sheet.dart';
 import '../product/product_page.dart';
 import '../stock/stock_page.dart';
 import '../settings/settings_page.dart';
@@ -42,10 +40,11 @@ class AdminHomePage extends StatefulWidget {
 }
 
 class _AdminHomePageState extends State<AdminHomePage> {
-  int _index = 1;
+  int _index = 2;
 
   static const _pages = [
     BiometricGate(child: DashboardPage()),
+    AttendancePage(),
     KasirPage(),
     ProductPage(),
     StockPage(),
@@ -54,6 +53,7 @@ class _AdminHomePageState extends State<AdminHomePage> {
 
   static const _navItems = [
     _NavItem(icon: Icons.dashboard_rounded, label: 'Dashboard'),
+    _NavItem(icon: Icons.fact_check_rounded, label: 'Absensi'),
     _NavItem(icon: Icons.shopping_cart_rounded, label: 'Kasir'),
     _NavItem(icon: Icons.restaurant_menu_rounded, label: 'Produk'),
     _NavItem(icon: Icons.inventory_2_rounded, label: 'Stok'),
@@ -368,15 +368,14 @@ class _Sidebar extends StatelessWidget {
   }
 
   Widget _logoIcon() => Container(
-        width: 36,
-        height: 36,
-        decoration: BoxDecoration(
-          color: ClayColors.primary,
-          borderRadius: BorderRadius.circular(10),
-        ),
-        child: const Icon(Icons.storefront_rounded,
-            color: Colors.white, size: 18),
-      );
+    width: 36,
+    height: 36,
+    decoration: BoxDecoration(
+      color: ClayColors.primary,
+      borderRadius: BorderRadius.circular(10),
+    ),
+    child: const Icon(Icons.storefront_rounded, color: Colors.white, size: 18),
+  );
 }
 
 class _TopBar extends StatelessWidget {
@@ -400,7 +399,7 @@ class _TopBar extends StatelessWidget {
             ),
           ),
           const Spacer(),
-          if (index == 1)
+          if (index == 2)
             Selector<CartProvider, int>(
               selector: (_, cart) => cart.totalItems,
               builder: (context, total, _) => total > 0
@@ -433,75 +432,20 @@ class _TopBar extends StatelessWidget {
 // -----------------------------------------------------------------------------
 // KASIR HOME (role kasir)
 // -----------------------------------------------------------------------------
-class KasirHomePage extends StatelessWidget {
+class KasirHomePage extends StatefulWidget {
   const KasirHomePage({super.key});
 
-  Future<void> _detectStoreLocation(BuildContext context) async {
-    final messenger = ScaffoldMessenger.of(context);
-    final auth = context.read<AuthProvider>();
-    final profile = auth.profile;
+  @override
+  State<KasirHomePage> createState() => _KasirHomePageState();
+}
 
-    if (profile == null) {
-      messenger.showSnackBar(
-        SnackBar(
-          content: const Text('Profil tidak ditemukan. Silakan login ulang.'),
-          backgroundColor: Colors.red,
-          behavior: SnackBarBehavior.floating,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-        ),
-      );
-      return;
-    }
+class _KasirHomePageState extends State<KasirHomePage> {
+  int _index = 0;
 
-    final locationService = LocationService();
-    try {
-      final position = await locationService.getCurrentPosition();
-      if (position == null) {
-        messenger.showSnackBar(
-          SnackBar(
-            content: const Text(
-              'Lokasi belum bisa dideteksi. Pastikan GPS aktif dan izin diberikan.',
-            ),
-            backgroundColor: Colors.red,
-            behavior: SnackBarBehavior.floating,
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(12),
-            ),
-          ),
-        );
-        return;
-      }
-
-      await locationService.saveStoreLocation(
-        userId: profile.id,
-        lat: position.latitude,
-        lng: position.longitude,
-      );
-      await auth.loadProfile();
-
-      messenger.showSnackBar(
-        SnackBar(
-          content: Text(
-            'Lokasi tersimpan: '
-            '${position.latitude.toStringAsFixed(6)}, '
-            '${position.longitude.toStringAsFixed(6)}',
-          ),
-          backgroundColor: ClayColors.success,
-          behavior: SnackBarBehavior.floating,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-        ),
-      );
-    } catch (e) {
-      messenger.showSnackBar(
-        SnackBar(
-          content: Text('Gagal deteksi lokasi: $e'),
-          backgroundColor: Colors.red,
-          behavior: SnackBarBehavior.floating,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-        ),
-      );
-    }
-  }
+  static const _navItems = [
+    _NavItem(icon: Icons.fact_check_rounded, label: 'Absensi'),
+    _NavItem(icon: Icons.shopping_cart_rounded, label: 'Kasir'),
+  ];
 
   Future<void> _confirmLogout(BuildContext context) async {
     final confirmed = await showDialog<bool>(
@@ -518,62 +462,58 @@ class KasirHomePage extends StatelessWidget {
     return Scaffold(
       appBar: _buildAppBar(
         context,
-        'Kasir BANGJUN SPOT',
+        _navItems[_index].label,
         onLogout: () => _confirmLogout(context),
-        extra: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            IconButton(
-              tooltip: 'Deteksi Lokasi',
-              onPressed: () => _detectStoreLocation(context),
-              icon: const Icon(Icons.my_location_rounded),
-              color: ClayColors.primary,
-            ),
-            IconButton(
-              tooltip: 'Scan Barcode/QR',
-              onPressed: () => _openBarcodeScanner(context),
-              icon: const Icon(Icons.qr_code_scanner_rounded),
-              color: ClayColors.primary,
-            ),
-            Selector<CartProvider, int>(
-              selector: (_, cart) => cart.totalItems,
-              builder: (context, total, _) => total > 0
-                  ? Container(
-                      margin: const EdgeInsets.only(right: 8),
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 10,
-                        vertical: 4,
-                      ),
-                      decoration: BoxDecoration(
-                        color: ClayColors.primary.withAlpha(25),
-                        borderRadius: BorderRadius.circular(10),
-                      ),
-                      child: Text(
-                        '$total item',
-                        style: TextStyle(
-                          fontSize: 12,
-                          color: ClayColors.primary,
-                          fontWeight: FontWeight.w600,
+        extra: _index == 1
+            ? Selector<CartProvider, int>(
+                selector: (_, cart) => cart.totalItems,
+                builder: (context, total, _) => total > 0
+                    ? Container(
+                        margin: const EdgeInsets.only(right: 8),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 10,
+                          vertical: 4,
                         ),
-                      ),
-                    )
-                  : const SizedBox.shrink(),
-            ),
-          ],
-        ),
+                        decoration: BoxDecoration(
+                          color: ClayColors.primary.withAlpha(25),
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        child: Text(
+                          '$total item',
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: ClayColors.primary,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      )
+                    : const SizedBox.shrink(),
+              )
+            : null,
       ),
-      body: LayoutBuilder(
-        builder: (context, constraints) {
-          if (constraints.maxWidth >= 800) {
-            return Center(
-              child: ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 800),
-                child: const KasirPage(),
-              ),
-            );
-          }
-          return const KasirPage();
-        },
+      body: IndexedStack(
+        index: _index,
+        children: [
+          const AttendancePage(),
+          LayoutBuilder(
+            builder: (context, constraints) {
+              if (constraints.maxWidth >= 800) {
+                return Center(
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 800),
+                    child: const KasirPage(),
+                  ),
+                );
+              }
+              return const KasirPage();
+            },
+          ),
+        ],
+      ),
+      bottomNavigationBar: _ClayPillBottomNav(
+        currentIndex: _index,
+        onChanged: (value) => setState(() => _index = value),
+        items: _navItems,
       ),
     );
   }
@@ -756,44 +696,3 @@ class _NavItem {
   final String label;
   const _NavItem({required this.icon, required this.label});
 }
-
-Future<void> _openBarcodeScanner(BuildContext context) async {
-  final productProvider = context.read<ProductProvider>();
-  final cartProvider = context.read<CartProvider>();
-  final products = productProvider.products;
-
-  if (products.isEmpty) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: const Text('Produk belum tersedia untuk dipindai'),
-        backgroundColor: Colors.red,
-        behavior: SnackBarBehavior.floating,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-      ),
-    );
-    return;
-  }
-
-  await Navigator.of(context).push(
-    MaterialPageRoute(
-      fullscreenDialog: true,
-      builder: (_) => BarcodeScannerSheet(
-        products: products,
-        onProductFound: (product) {
-          cartProvider.addItem(product);
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('${product.name} ditambahkan via scan'),
-              backgroundColor: ClayColors.success,
-              behavior: SnackBarBehavior.floating,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(12),
-              ),
-            ),
-          );
-        },
-      ),
-    ),
-  );
-}
-

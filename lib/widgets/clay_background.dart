@@ -45,7 +45,10 @@ class _ClayBackgroundState extends State<ClayBackground>
             Positioned(
               bottom: 60 + (t * 15),
               right: 40 + (t * 12),
-              child: _Blob(color: ClayColors.secondary.withAlpha(56), size: 200),
+              child: _Blob(
+                color: ClayColors.secondary.withAlpha(56),
+                size: 200,
+              ),
             ),
             Positioned(
               top: 220 - (t * 10),
@@ -56,10 +59,7 @@ class _ClayBackgroundState extends State<ClayBackground>
           ],
         );
       },
-      child: Container(
-        color: ClayColors.canvas,
-        child: widget.child,
-      ),
+      child: Container(color: ClayColors.canvas, child: widget.child),
     );
   }
 }
@@ -79,10 +79,7 @@ class _Blob extends StatelessWidget {
         child: Container(
           width: size,
           height: size,
-          decoration: BoxDecoration(
-            color: color,
-            shape: BoxShape.circle,
-          ),
+          decoration: BoxDecoration(color: color, shape: BoxShape.circle),
         ),
       ),
     );

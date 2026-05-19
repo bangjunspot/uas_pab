@@ -28,12 +28,10 @@ class RupiahInputFormatter extends TextInputFormatter {
   /// Contoh: 10000 → "10.000"
   static String formatNumber(int value) {
     if (value == 0) return '0';
-    return value
-        .toString()
-        .replaceAllMapped(
-          RegExp(r'(\d{1,3})(?=(\d{3})+(?!\d))'),
-          (m) => '${m[1]}.',
-        );
+    return value.toString().replaceAllMapped(
+      RegExp(r'(\d{1,3})(?=(\d{3})+(?!\d))'),
+      (m) => '${m[1]}.',
+    );
   }
 
   /// Parse formatted string kembali ke double.

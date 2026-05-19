@@ -6,11 +6,12 @@ class TransactionService {
 
   Future<String> createTransaction({
     required String cashierId,
+    String? shiftId,
     required double total,
   }) async {
     final data = await _supabase.client
         .from('transactions')
-        .insert({'cashier_id': cashierId, 'total': total})
+        .insert({'cashier_id': cashierId, 'shift_id': shiftId, 'total': total})
         .select('id')
         .single();
     return data['id'].toString();
@@ -55,7 +56,7 @@ class TransactionService {
   Future<List<TransactionRecord>> fetchTransactions() async {
     final data = await _supabase.client
         .from('transactions')
-        .select('id,total,created_at,cashier_id')
+        .select('id,total,created_at,cashier_id,shift_id')
         .order('created_at', ascending: false);
     return (data as List)
         .map((item) => TransactionRecord.fromMap(item as Map<String, dynamic>))

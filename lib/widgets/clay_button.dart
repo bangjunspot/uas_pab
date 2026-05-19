@@ -61,7 +61,9 @@ class _ClayButtonState extends State<ClayButton> {
         onTapDown: (_) => setState(() => _pressed = true),
         onTapUp: (_) => setState(() => _pressed = false),
         onTapCancel: () => setState(() => _pressed = false),
-        child: widget.fullWidth ? SizedBox(width: double.infinity, child: button) : button,
+        child: widget.fullWidth
+            ? SizedBox(width: double.infinity, child: button)
+            : button,
       ),
     );
   }
