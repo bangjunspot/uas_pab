@@ -58,10 +58,17 @@ class LocationService {
     required double lat,
     required double lng,
   }) async {
-    await _supabase.client.from('profiles').update({
+    final updated = await _supabase.client.from('profiles').update({
       'store_lat': lat,
       'store_lng': lng,
-    }).eq('id', userId);
+    }).eq('id', userId).select('id').maybeSingle();
+
+    // RLS bisa membuat update "diam-diam gagal" (0 row terpengaruh tanpa error).
+    if (updated == null) {
+      throw Exception(
+        'Lokasi tidak tersimpan. Pastikan akun punya izin update profil.',
+      );
+    }
   }
 
   /// Ambil koordinat kedai yang tersimpan untuk user tertentu.

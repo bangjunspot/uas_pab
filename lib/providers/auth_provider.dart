@@ -145,8 +145,8 @@ class AuthProvider extends ChangeNotifier {
     }
   }
 
-  /// Jalankan verifikasi biometrik untuk login cepat.
-  Future<bool> tryBiometricLogin() async {
+  /// Jalankan verifikasi biometrik perangkat.
+  Future<bool> verifyBiometric() async {
     error = null;
     notifyListeners();
 
@@ -173,7 +173,7 @@ class AuthProvider extends ChangeNotifier {
         return false;
       }
 
-      return Supabase.instance.client.auth.currentSession != null;
+      return true;
     } catch (e) {
       error = e.toString();
       notifyListeners();

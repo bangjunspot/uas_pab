@@ -21,6 +21,8 @@ class LoginPage extends StatefulWidget {
 
 class _LoginPageState extends State<LoginPage> {
   static const String _biometricEnabledKey = 'biometric_enabled';
+  static const String _biometricEmailKey = 'biometric_email';
+  static const String _biometricPasswordKey = 'biometric_password';
 
   final _formKey = GlobalKey<FormState>();
   final _emailController = TextEditingController();
@@ -31,6 +33,7 @@ class _LoginPageState extends State<LoginPage> {
   bool _biometricEnabled = false;
   bool _isLoadingBiometric = true;
   bool _isProcessingBiometric = false;
+  bool _autoBiometricAttempted = false;
 
   @override
   void initState() {
@@ -59,6 +62,7 @@ class _LoginPageState extends State<LoginPage> {
         _supportBiometric = canCheck && supported;
         _isLoadingBiometric = false;
       });
+      _tryAutoBiometricLogin();
     } catch (e) {
       debugPrint('Gagal memuat biometrik: $e');
       if (!mounted) return;
@@ -92,17 +96,40 @@ class _LoginPageState extends State<LoginPage> {
 
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool(_biometricEnabledKey, value);
+    if (!value) {
+      await prefs.remove(_biometricEmailKey);
+      await prefs.remove(_biometricPasswordKey);
+    }
     if (!mounted) return;
     setState(() => _biometricEnabled = value);
+  }
+
+  Future<void> _saveBiometricCredentials(String email, String password) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_biometricEmailKey, email);
+    await prefs.setString(_biometricPasswordKey, password);
+  }
+
+  Future<(String, String)?> _loadBiometricCredentials() async {
+    final prefs = await SharedPreferences.getInstance();
+    final email = prefs.getString(_biometricEmailKey)?.trim();
+    final password = prefs.getString(_biometricPasswordKey);
+    if (email == null || email.isEmpty || password == null || password.isEmpty) {
+      return null;
+    }
+    return (email, password);
   }
 
   /// Jalankan login manual memakai email dan password.
   Future<void> _handleLogin(AuthProvider auth) async {
     if (!_formKey.currentState!.validate()) return;
-    await auth.login(
-      _emailController.text.trim(),
-      _passwordController.text.trim(),
-    );
+    final email = _emailController.text.trim();
+    final password = _passwordController.text.trim();
+
+    await auth.login(email, password);
+    if (auth.error == null && _biometricEnabled) {
+      await _saveBiometricCredentials(email, password);
+    }
     if (auth.error != null && mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
@@ -129,7 +156,43 @@ class _LoginPageState extends State<LoginPage> {
 
     setState(() => _isProcessingBiometric = true);
     try {
-      final success = await auth.tryBiometricLogin();
+      final creds = await _loadBiometricCredentials();
+      if (creds == null) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: const Text(
+              'Belum ada akun tersimpan untuk sidik jari. Login manual sekali dulu.',
+            ),
+            backgroundColor: Colors.red,
+            behavior: SnackBarBehavior.floating,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(12),
+            ),
+          ),
+        );
+        return;
+      }
+
+      final verified = await auth.verifyBiometric();
+      if (!verified) {
+        if (!mounted) return;
+        final message = auth.error ?? 'Verifikasi sidik jari gagal.';
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(message),
+            backgroundColor: Colors.red,
+            behavior: SnackBarBehavior.floating,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(12),
+            ),
+          ),
+        );
+        return;
+      }
+
+      await auth.login(creds.$1, creds.$2);
+      final success = auth.error == null;
       if (!mounted) return;
 
       if (success) {
@@ -144,8 +207,7 @@ class _LoginPageState extends State<LoginPage> {
           ),
         );
       } else {
-        final message = auth.error ??
-            'Tidak ada sesi aktif. Silakan login manual terlebih dahulu.';
+        final message = auth.error ?? 'Gagal login menggunakan akun tersimpan.';
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(message),
@@ -174,6 +236,17 @@ class _LoginPageState extends State<LoginPage> {
         setState(() => _isProcessingBiometric = false);
       }
     }
+  }
+
+  void _tryAutoBiometricLogin() {
+    if (_autoBiometricAttempted || !_biometricEnabled || !_supportBiometric) {
+      return;
+    }
+    _autoBiometricAttempted = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      _handleBiometricLogin(context.read<AuthProvider>());
+    });
   }
 
   @override
@@ -327,16 +400,14 @@ class _LoginPageState extends State<LoginPage> {
                         SizedBox(
                           width: double.infinity,
                           child: OutlinedButton.icon(
-                            onPressed: (!auth.isLoggedIn || _isProcessingBiometric)
+                            onPressed: _isProcessingBiometric
                                 ? null
                                 : () => _handleBiometricLogin(auth),
                             icon: const Icon(Icons.fingerprint_rounded),
                             label: Text(
-                              !auth.isLoggedIn
-                                  ? 'Login dulu untuk sidik jari'
-                                  : (_isProcessingBiometric
-                                      ? 'Memverifikasi...'
-                                      : 'Masuk dengan Sidik Jari'),
+                              _isProcessingBiometric
+                                  ? 'Memverifikasi...'
+                                  : 'Masuk dengan Sidik Jari',
                             ),
                             style: OutlinedButton.styleFrom(
                               foregroundColor: ClayColors.primary,

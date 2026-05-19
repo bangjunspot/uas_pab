@@ -30,6 +30,7 @@ class _DashboardPageState extends State<DashboardPage> {
   bool _isDetectingLocation = false;
   double? _lastAccuracyMeter;
   DateTime? _lastDetectedAt;
+  Position? _lastDetectedPosition;
 
   static const String _mapHtml = '''
   <!DOCTYPE html>
@@ -127,6 +128,7 @@ class _DashboardPageState extends State<DashboardPage> {
       setState(() {
         _lastAccuracyMeter = position.accuracy;
         _lastDetectedAt = DateTime.now();
+        _lastDetectedPosition = position;
       });
       _showSnackBar('Lokasi kedai berhasil diperbarui.');
     } catch (e) {
@@ -773,6 +775,18 @@ class _DashboardPageState extends State<DashboardPage> {
                         color: ClayColors.textMuted,
                       ),
                     ),
+                    if (_lastDetectedPosition != null) ...[
+                      const SizedBox(height: 4),
+                      Text(
+                        'Koordinat deteksi: '
+                        '${_lastDetectedPosition!.latitude.toStringAsFixed(6)}, '
+                        '${_lastDetectedPosition!.longitude.toStringAsFixed(6)}',
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: ClayColors.textMuted,
+                        ),
+                      ),
+                    ],
                   ],
                   if (hasSavedLocation) ...[
                     const SizedBox(height: 8),

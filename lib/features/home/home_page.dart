@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import '../../core/services/location_service.dart';
 import '../../models/profile.dart';
 import '../../providers/auth_provider.dart';
 import '../../providers/cart_provider.dart';
@@ -435,6 +436,73 @@ class _TopBar extends StatelessWidget {
 class KasirHomePage extends StatelessWidget {
   const KasirHomePage({super.key});
 
+  Future<void> _detectStoreLocation(BuildContext context) async {
+    final messenger = ScaffoldMessenger.of(context);
+    final auth = context.read<AuthProvider>();
+    final profile = auth.profile;
+
+    if (profile == null) {
+      messenger.showSnackBar(
+        SnackBar(
+          content: const Text('Profil tidak ditemukan. Silakan login ulang.'),
+          backgroundColor: Colors.red,
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        ),
+      );
+      return;
+    }
+
+    final locationService = LocationService();
+    try {
+      final position = await locationService.getCurrentPosition();
+      if (position == null) {
+        messenger.showSnackBar(
+          SnackBar(
+            content: const Text(
+              'Lokasi belum bisa dideteksi. Pastikan GPS aktif dan izin diberikan.',
+            ),
+            backgroundColor: Colors.red,
+            behavior: SnackBarBehavior.floating,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(12),
+            ),
+          ),
+        );
+        return;
+      }
+
+      await locationService.saveStoreLocation(
+        userId: profile.id,
+        lat: position.latitude,
+        lng: position.longitude,
+      );
+      await auth.loadProfile();
+
+      messenger.showSnackBar(
+        SnackBar(
+          content: Text(
+            'Lokasi tersimpan: '
+            '${position.latitude.toStringAsFixed(6)}, '
+            '${position.longitude.toStringAsFixed(6)}',
+          ),
+          backgroundColor: ClayColors.success,
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        ),
+      );
+    } catch (e) {
+      messenger.showSnackBar(
+        SnackBar(
+          content: Text('Gagal deteksi lokasi: $e'),
+          backgroundColor: Colors.red,
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        ),
+      );
+    }
+  }
+
   Future<void> _confirmLogout(BuildContext context) async {
     final confirmed = await showDialog<bool>(
       context: context,
@@ -455,6 +523,12 @@ class KasirHomePage extends StatelessWidget {
         extra: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
+            IconButton(
+              tooltip: 'Deteksi Lokasi',
+              onPressed: () => _detectStoreLocation(context),
+              icon: const Icon(Icons.my_location_rounded),
+              color: ClayColors.primary,
+            ),
             IconButton(
               tooltip: 'Scan Barcode/QR',
               onPressed: () => _openBarcodeScanner(context),

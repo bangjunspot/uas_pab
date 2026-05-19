@@ -98,7 +98,9 @@ class _ProductPageState extends State<ProductPage> {
       final cropped = await ImageCropper().cropImage(
         sourcePath: sourcePath,
         compressFormat: ImageCompressFormat.jpg,
-        compressQuality: 85,
+        compressQuality: 78,
+        maxWidth: 1280,
+        maxHeight: 1280,
         uiSettings: [
           AndroidUiSettings(
             toolbarTitle: 'Crop Foto Produk',
@@ -132,6 +134,8 @@ class _ProductPageState extends State<ProductPage> {
       final picked = await _imagePicker.pickImage(
         source: source,
         imageQuality: 85,
+        maxWidth: 1600,
+        maxHeight: 1600,
       );
       if (picked == null) return null;
       if (!mounted) return null;
@@ -146,15 +150,13 @@ class _ProductPageState extends State<ProductPage> {
     try {
       final result = await FilePicker.platform.pickFiles(
         type: FileType.image,
-        withData: true,
+        withData: kIsWeb,
       );
       if (result == null || result.files.isEmpty) return null;
 
       final file = result.files.first;
-      if (file.bytes != null) {
-        if (kIsWeb || file.path == null || file.path!.isEmpty) {
-          return file.bytes;
-        }
+      if (kIsWeb) {
+        return file.bytes;
       }
 
       if (file.path == null || file.path!.isEmpty) {
@@ -253,6 +255,8 @@ class _ProductPageState extends State<ProductPage> {
         fit: BoxFit.cover,
         width: double.infinity,
         height: 180,
+        cacheWidth: 1080,
+        filterQuality: FilterQuality.low,
       );
     } else if (imageUrl != null && imageUrl.isNotEmpty) {
       child = Image.network(
